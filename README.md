@@ -1,4 +1,11 @@
-# Cybersecurity Nexus
+# NikruvX · Cyber Nexus
+
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Stack](https://img.shields.io/badge/stack-Neo4j%20·%20FastAPI%20·%20Ollama-00e5ff)]()
+[![Local-first](https://img.shields.io/badge/data-stays%20local-2ee59d)]()
+[![Security policy](https://img.shields.io/badge/security-report%20a%20vulnerability-red.svg)](https://github.com/yrhelm/nikruvx/security/advisories/new)
+
+> Graph-native cybersecurity intelligence — CVE × CWE × Packages × AI threats × Policies, mapped across all 7 OSI layers, fully local.
 
 A graph-powered local "nexus world" of cybersecurity vulnerabilities. Every CVE
 is wired up to its CWE class, OSI layer(s), affected packages across **npm /
@@ -278,7 +285,48 @@ Or click **Live KEV** in the top nav.
 
 ## License
 
-For your internal research/security use. CVE/CWE/ATLAS/OWASP data belongs to
-their respective owners.
-<img width="1654" height="953" alt="image" src="https://github.com/user-attachments/assets/06612669-02a7-48fb-be9f-43d6ee7d77ae" />
+NikruvX (Cyber Nexus) is released under the **Apache License 2.0** —
+see [LICENSE](LICENSE) for the full text.
 
+You're free to use, modify, and distribute this software, including for
+commercial purposes, provided you retain the copyright notice and the
+license. The Apache 2.0 license also includes an explicit patent grant
+from contributors to all users.
+
+### Third-party data attribution
+
+NikruvX consumes vulnerability and threat data from public sources. Those
+data sets remain the property of their respective owners and are governed
+by their own terms of use:
+
+- **CVE / CWE** — © The MITRE Corporation. CVE® and CWE™ are registered
+  trademarks of MITRE.
+  Source: [cve.org](https://www.cve.org/), [cwe.mitre.org](https://cwe.mitre.org/).
+- **NVD** — Public domain (NIST Special Publication 800-XX series).
+  Source: [nvd.nist.gov](https://nvd.nist.gov/).
+- **OSV.dev** — © Google LLC, distributed under CC-BY 4.0.
+  Source: [osv.dev](https://osv.dev/).
+- **GitHub Advisory Database (GHSA)** — CC-BY 4.0.
+  Source: [github.com/advisories](https://github.com/advisories).
+- **MITRE ATLAS™** — © The MITRE Corporation, used under MITRE's terms of use.
+  Source: [atlas.mitre.org](https://atlas.mitre.org/).
+- **OWASP LLM Top 10** — CC-BY-SA 4.0.
+  Source: [genai.owasp.org](https://genai.owasp.org/llm-top-10/).
+- **CISA Known Exploited Vulnerabilities** — Public domain.
+  Source: [cisa.gov/known-exploited-vulnerabilities-catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog).
+- **ExploitDB** — © Offensive Security, used under their terms.
+  Source: [exploit-db.com](https://www.exploit-db.com/).
+
+By using NikruvX you agree to comply with the upstream terms for any
+data you ingest. NikruvX does not redistribute the upstream catalogs;
+it fetches them at runtime.
+
+### "Apache 2.0" in plain English
+
+If you're not into license-speak: you can do almost anything with this
+code (use it, change it, ship it, sell products built on it). The only
+real obligations are to keep the original copyright/license notices,
+state any significant changes you made, and not use the project's name
+to endorse your derivative work without permission. Contributors who
+submit code grant a patent license, so neither they nor anyone else can
+sue you for using their contributions.
