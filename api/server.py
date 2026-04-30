@@ -68,7 +68,7 @@ _cors_origins = [o.strip() for o in (settings.cors_origins or "").split(",") if 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins or [f"http://{settings.api_host}:{settings.api_port}"],
-    allow_methods=["GET", "POST", "DELETE", "PUT", "OPTIONS"],
+    allow_methods=["GET", "POST", "DELETE", "PUT", "PATCH", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
 )
 
