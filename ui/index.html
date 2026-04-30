@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Cybersecurity Nexus // Vulnerability Graph Across the OSI Stack</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="stylesheet" href="/ui/styles.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.2/cytoscape.min.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">⬢</span>
+    <div>
+      <div class="title">CYBER<span class="accent">NEXUS</span></div>
+      <div class="subtitle">CVE × CWE × Packages × AI Threats — across all 7 OSI layers</div>
+    </div>
+  </div>
+  <div class="searchbox">
+    <input id="q" type="text" placeholder="Search CVE-ID, CWE-ID, package, keyword (e.g. log4j, prompt injection)…" />
+    <button id="searchBtn">Search</button>
+  </div>
+  <nav class="modes">
+    <button class="mode-btn active" data-mode="explore">Explore</button>
+    <button class="mode-btn" data-mode="sbom">SBOM Scan</button>
+    <button class="mode-btn" data-mode="posture">Posture</button>
+    <button class="mode-btn" data-mode="redteam">Red-Team</button>
+    <button class="mode-btn" data-mode="hipaa">HIPAA / Compliance</button>
+    <button class="mode-btn" data-mode="clinical">Clinical AI</button>
+    <button class="mode-btn" data-mode="kev">Live KEV</button>
+  </nav>
+</header>
+
+<main>
+  <!-- LEFT: OSI tower + AI threats -->
+  <aside class="left">
+    <h3>OSI Layer Map</h3>
+    <ol class="osi-tower" id="osiTower"></ol>
+    <h3 style="margin-top:18px">AI / LLM Threats</h3>
+    <ul id="aiList" class="aithreats"></ul>
+  </aside>
+
+  <!-- CENTER: detail panel + graph -->
+  <section class="center">
+    <div id="detail" class="detail-panel">
+      <div class="hero">
+        <div class="hero-stats" id="heroStats">
+          <div class="stat"><div class="num" id="cveCount">—</div><div class="lbl">CVEs</div></div>
+          <div class="stat"><div class="num" id="cweCount">—</div><div class="lbl">CWEs</div></div>
+          <div class="stat"><div class="num" id="pkgCount">—</div><div class="lbl">Packages</div></div>
+          <div class="stat"><div class="num" id="pocCount">—</div><div class="lbl">PoCs</div></div>
+          <div class="stat"><div class="num" id="aiCount">—</div><div class="lbl">AI Threats</div></div>
+        </div>
+        <div class="hero-msg">
+          <p>Welcome to the <b>Cybersecurity Nexus</b>. Every CVE is mapped to its CWE class, OSI layer(s), affected packages across npm / PyPI / Maven / Go / RubyGems / Cargo / OS, and any public PoC code we can find. AI/ML threats from MITRE ATLAS &amp; OWASP LLM Top 10 are integrated as first-class citizens.</p>
+          <p>Search above, click a layer in the OSI tower, or jump to one of these:</p>
+          <div class="quicklinks">
+            <button onclick="loadCVE('CVE-2021-44228')">CVE-2021-44228 (Log4Shell)</button>
+            <button onclick="loadCVE('CVE-2024-3094')">CVE-2024-3094 (xz)</button>
+            <button onclick="loadCVE('CVE-2023-44487')">CVE-2023-44487 (HTTP/2 RST)</button>
+            <button onclick="loadCWE('CWE-502')">CWE-502 (Deserialization)</button>
+            <button onclick="loadCWE('CWE-79')">CWE-79 (XSS)</button>
+            <button onclick="loadAIThreat('LLM01:2025')">LLM01 Prompt Injection</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="graph-wrap">
+      <div class="graph-header">
+        <span>Vulnerability Graph</span>
+        <span id="graphHint">load a CVE to see its nexus</span>
+      </div>
+      <div id="cy"></div>
+    </div>
+  </section>
+
+  <!-- Mode overlays (hidden by default) -->
+  <section id="sbomMode" class="mode-overlay" hidden>
+    <div class="mode-inner">
+      <h2>SBOM Scan — <span class="muted">drop a manifest, get your live attack surface</span></h2>
+      <div id="dropzone" class="dropzone">
+        <input type="file" id="sbomFile" accept=".json,.txt,.xml,.lock,.toml,.mod" />
+        <p>Drag &amp; drop <code>package.json</code>, <code>requirements.txt</code>, <code>pom.xml</code>, <code>go.mod</code>, <code>Gemfile.lock</code>, <code>Cargo.lock</code>, or a <b>CycloneDX/SPDX</b> JSON. <br>Max 5 MB.</p>
+        <button id="sbomBtn">Scan</button>
+      </div>
+      <div id="sbomResult" class="sbom-result"></div>
+    </div>
+  </section>
+
+  <section id="redteamMode" class="mode-overlay" hidden>
+    <div class="mode-inner">
+      <h2>AI Red-Team Mode — <span class="muted">stack to attack plan</span></h2>
+      <textarea id="rtStack" rows="4" placeholder="Describe your stack: 'Spring Boot 3.2 + PostgreSQL 15 + Redis + Kubernetes, internal LangChain RAG bot using OpenAI'..."></textarea>
+      <div class="rt-row">
+        <input id="rtPurls" placeholder="Optional purls (comma-separated): pkg:npm/express, pkg:pypi/django ..." />
+        <select id="rtEntry">
+          <option value="internet">Entry: Public Internet</option>
+          <option value="lan">Entry: LAN insider</option>
+          <option value="physical">Entry: Physical access</option>
+        </select>
+        <button id="rtBtn">Generate plan</button>
+      </div>
+      <div id="rtResult" class="rt-result"></div>
+    </div>
+  </section>
+
+  <section id="postureMode" class="mode-overlay" hidden>
+    <div class="mode-inner">
+      <h2>Posture — <span class="muted">policy validation against CVE attack chains</span></h2>
+
+      <nav class="sub-tabs">
+        <button class="sub-btn active" data-sub="upload">Upload Policies</button>
+        <button class="sub-btn" data-sub="matrix">Coverage Matrix</button>
+        <button class="sub-btn" data-sub="gaps">Gaps & Replay</button>
+      </nav>
+
+      <div id="subUpload" class="sub-pane">
+        <div class="dropzone" id="policyDrop">
+          <input type="file" id="policyFiles" multiple accept=".json,.txt,.rules,.conf,.nft,.xml" />
+          <p>Drop AWS IAM/SCP/S3/KMS/SG/WAF JSON, Azure CA/Intune/NSG JSON, GCP IAM/Org Policy/VPC FW JSON, ModSecurity rules, iptables-save, nftables, Cloudflare rules. Multiple files OK.</p>
+          <button id="policyUploadBtn">Import</button>
+          <button id="policyClearBtn" style="background:transparent;color:var(--accent-2);border:1px solid var(--accent-2);margin-left:8px">Clear All</button>
+        </div>
+
+        <h3 style="margin-top:18px">Or paste a single policy JSON:</h3>
+        <textarea id="policyPaste" rows="10" placeholder='{"Version": "2012-10-17", "Statement": [...]}'></textarea>
+        <div class="rt-row">
+          <input id="pasteHint" placeholder="Optional filename hint (e.g. iam-policy.json)" />
+          <button id="pastePolicyBtn">Parse</button>
+        </div>
+
+        <div id="policyResult" style="margin-top:16px"></div>
+
+        <h3 style="margin-top:24px">Currently Loaded</h3>
+        <div id="policyList"></div>
+      </div>
+
+      <div id="subMatrix" class="sub-pane" hidden>
+        <div id="matrixBox" class="muted">Loading matrix…</div>
+      </div>
+
+      <div id="subGaps" class="sub-pane" hidden>
+        <div class="rt-row" style="grid-template-columns:1fr auto">
+          <input id="gapCve" placeholder="CVE-ID to analyze (e.g. CVE-2021-44228)" />
+          <button id="gapRunBtn">Run gap & replay</button>
+        </div>
+        <div id="gapsBox" style="margin-top:16px"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="hipaaMode" class="mode-overlay" hidden>
+    <div class="mode-inner">
+      <h2>HIPAA / Compliance Lens — <span class="muted">PHI exposure + Security Risk Analysis</span></h2>
+      <div class="rt-row" style="grid-template-columns:auto auto 1fr auto auto">
+        <button id="phiSeedBtn" title="Pull every healthcare package (HL7/FHIR/DICOM/EHR/clinical NLP/biosignals) from OSV.dev and tag them. Takes 1-2 minutes the first time.">Seed &amp; Tag PHI Packages (OSV)</button>
+        <button id="phiTagBtn" style="background:transparent;border:1px solid var(--border);color:var(--muted)" title="Re-tag without OSV ingest - fast, but won't pull CVEs">Quick Tag Only</button>
+        <input id="hipaaOrg" placeholder="Organization name (for the report)" />
+        <button id="hipaaSraBtn">Generate SRA (Markdown)</button>
+        <button id="hipaaSraDocxBtn" style="background:transparent;border:1px solid var(--accent);color:var(--accent);margin-left:6px">Download .docx</button>
+      </div>
+      <div id="phiSeedStatus" class="muted" style="margin-top:8px"></div>
+      <textarea id="hipaaStack" rows="3" placeholder="Briefly describe the PHI-handling stack (clinical app, EHR integration, etc.) - included in the SRA executive summary."></textarea>
+
+      <div id="hipaaSummary" style="margin-top:14px"></div>
+      <div id="hipaaSraOut" class="rt-result" style="margin-top:16px;display:none"></div>
+    </div>
+  </section>
+
+  <section id="clinicalMode" class="mode-overlay" hidden>
+    <div class="mode-inner">
+      <h2>Clinical AI — <span class="muted">adversarial test suite + Model Card</span></h2>
+
+      <nav class="sub-tabs">
+        <button class="sub-btn active" data-sub-clin="run">Run Tests</button>
+        <button class="sub-btn" data-sub-clin="findings">Findings</button>
+        <button class="sub-btn" data-sub-clin="card">Model Card</button>
+      </nav>
+
+      <div id="clinRun" class="sub-pane">
+        <div class="rt-row" style="grid-template-columns:1fr auto">
+          <input id="clinModel" placeholder="Model (e.g. llama3.1:8b for Ollama, or gpt-4o-mini for an OpenAI-compatible endpoint)" value="llama3.1:8b" />
+          <button id="clinRunBtn">Run all categories</button>
+        </div>
+        <div class="rt-row" style="grid-template-columns:1fr 1fr">
+          <input id="clinApiBase" placeholder="Optional /v1 base URL for OpenAI-compatible endpoint (leave blank for Ollama)" />
+          <input id="clinApiKey" placeholder="Optional API key" type="password" />
+        </div>
+        <div id="clinCategories" style="margin-top:12px"></div>
+        <div id="clinRunStatus" style="margin-top:14px"></div>
+      </div>
+
+      <div id="clinFindings" class="sub-pane" hidden>
+        <div class="rt-row" style="grid-template-columns:1fr auto">
+          <input id="clinFindingsModel" placeholder="Filter by model (optional)" />
+          <button id="clinFindingsBtn">Refresh</button>
+        </div>
+        <div id="clinFindingsBox" style="margin-top:14px"></div>
+      </div>
+
+      <div id="clinCard" class="sub-pane" hidden>
+        <div class="rt-row" style="grid-template-columns:1fr auto auto">
+          <input id="cardModel" placeholder="Model name" value="llama3.1:8b" />
+          <button id="cardGenBtn">Generate Markdown</button>
+          <button id="cardDocxBtn" style="background:transparent;border:1px solid var(--accent);color:var(--accent)">Download .docx</button>
+        </div>
+        <textarea id="cardIntended" rows="2" placeholder="Intended use (clinical task, target population, decision support level)"></textarea>
+        <textarea id="cardTraining" rows="2" placeholder="Training data (sources, time range, demographics, BAA/de-id status)"></textarea>
+        <textarea id="cardEval" rows="2" placeholder="Evaluation data and performance"></textarea>
+        <textarea id="cardLimits" rows="2" placeholder="Known limitations and out-of-scope use"></textarea>
+        <textarea id="cardMonitoring" rows="2" placeholder="Monitoring plan, drift detection, ACP"></textarea>
+        <div id="cardOut" class="rt-result" style="margin-top:16px;display:none"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="kevMode" class="mode-overlay" hidden>
+    <div class="mode-inner">
+      <h2>Live KEV — <span class="muted">CISA Known Exploited Vulnerabilities</span></h2>
+      <button id="kevRefresh">Refresh from CISA</button>
+      <div id="kevResult" class="kev-result"></div>
+    </div>
+  </section>
+
+  <!-- RIGHT: search results / risk / pocs -->
+  <aside class="right">
+    <h3>Recent Activity</h3>
+    <div id="results" class="results">
+      <div class="muted">Search results &amp; risk scores will appear here.</div>
+    </div>
+  </aside>
+</main>
+
+<footer>
+  <span>Local Neo4j graph · OSV.dev · GHSA · MITRE CWE · MITRE ATLAS · OWASP LLM Top 10 · NVD</span>
+  <span id="health">·</span>
+</footer>
+
+<script src="/ui/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,121 @@
+# ===========================================================
+#  NikruvX / Cyber Nexus — .gitignore
+# ===========================================================
+
+# ---- Secrets / config (NEVER commit) ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*_secret*
+*.crt
+secrets/
+
+# ---- Local Neo4j data (huge + machine-specific) ----
+data/
+!data/.gitkeep
+neo4j/
+*.db
+*.dump
+*.transaction.db.*
+debug.log
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# ---- Virtual environments ----
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# ---- Node (if anyone adds frontend tooling) ----
+node_modules/
+package-lock.json
+yarn.lock
+.npm/
+.yarn/
+.pnp.*
+
+# ---- Cyber Nexus runtime artifacts ----
+outputs/
+sessions/
+exports/
+sboms_uploaded/
+policies_uploaded/
+sra_reports/
+model_cards/
+cve_dumps/
+embeddings/
+poc_cache/
+telemetry_cache/
+*.embedding
+*.cypher.bak
+last_ingest.json
+
+# ---- Reports / PII risk ----
+*.docx
+*.pdf
+sample_phi/
+sample_chart_data/
+*.hl7
+*.dcm
+*.fhir.json
+
+# ---- Logs ----
+*.log
+logs/
+*.log.*
+
+# ---- IDE / editor ----
+.idea/
+.vscode/
+!.vscode/settings.example.json
+*.swp
+*.swo
+.history/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- Docker ----
+.docker/
+docker-volumes/
+
+# ---- Jupyter ----
+.ipynb_checkpoints/
+*.ipynb
+profile_default/
+ipython_config.py
+
+# ---- pyenv / asdf ----
+.python-version
+
+# ---- Local credentials / cloud ----
+.aws/
+.azure/
+.config/gcloud/
+gha-creds-*.json
+service-account*.json
+
+# ---- Optional: keep an empty data dir scaffold but exclude contents ----
+!data/neo4j/.gitkeep
