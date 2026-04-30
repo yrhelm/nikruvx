@@ -18,6 +18,8 @@ Usage:
 from __future__ import annotations
 import argparse
 import re
+import time
+from pathlib import Path
 from rich.progress import Progress
 
 from .common import http_client, attach_poc, console, polite_sleep
@@ -28,6 +30,12 @@ TRICKEST_RAW = "https://raw.githubusercontent.com/trickest/cve/main"
 NOMI_RAW = "https://raw.githubusercontent.com/nomi-sec/PoC-in-GitHub/master"
 EXPLOITDB_CSV = "https://gitlab.com/exploit-database/exploitdb/-/raw/main/files_exploits.csv"
 GH_SEARCH = "https://api.github.com/search/repositories"
+
+# ExploitDB CSV cache: ~10 MB file; was previously re-downloaded per CVE.
+_EXPLOITDB_CACHE_DIR = settings.data_dir / "cache"
+_EXPLOITDB_CACHE_FILE = _EXPLOITDB_CACHE_DIR / "exploitdb_files.csv"
+_EXPLOITDB_TTL_SECONDS = 24 * 3600  # 24h
+_exploitdb_text: str | None = None  # in-process memo
 
 
 def _gh_headers() -> dict:
@@ -91,7 +99,7 @@ def from_github_search(cve_id: str) -> list[tuple[str, str]]:
 
 def from_exploitdb(cve_id: str) -> list[tuple[str, str]]:
     """ExploitDB has an aliases column with CVE references."""
-    csv_text = _fetch_raw(EXPLOITDB_CSV)
+    csv_text = _load_exploitdb_csv()
     if not csv_text:
         return []
     out = []
@@ -105,6 +113,31 @@ def from_exploitdb(cve_id: str) -> list[tuple[str, str]]:
                 if len(out) >= 3:
                     break
     return out
+
+
+def _load_exploitdb_csv() -> str | None:
+    """Return ExploitDB CSV text, using on-disk cache (24h TTL) and a
+    process-wide memo so repeated calls don't pull the multi-MB file again."""
+    global _exploitdb_text
+    if _exploitdb_text is not None:
+        return _exploitdb_text
+    try:
+        if (_EXPLOITDB_CACHE_FILE.exists()
+                and time.time() - _EXPLOITDB_CACHE_FILE.stat().st_mtime < _EXPLOITDB_TTL_SECONDS):
+            _exploitdb_text = _EXPLOITDB_CACHE_FILE.read_text(encoding="utf-8", errors="replace")
+            return _exploitdb_text
+    except OSError:
+        pass
+    text = _fetch_raw(EXPLOITDB_CSV)
+    if not text:
+        return None
+    try:
+        _EXPLOITDB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        _EXPLOITDB_CACHE_FILE.write_text(text, encoding="utf-8")
+    except OSError as e:
+        console.print(f"[yellow]ExploitDB cache write failed: {e}")
+    _exploitdb_text = text
+    return text
 
 
 def _snippet_for(url: str) -> tuple[str | None, str | None]:

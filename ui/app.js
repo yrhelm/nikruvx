@@ -120,10 +120,10 @@ function renderResults(r) {
   const div = $("#results");
   div.innerHTML = "";
   const groups = [
-    ["CVEs", r.cves, x => `<div class="row" onclick="loadCVE('${x.id}')"><b>${x.id}</b> · ${x.severity || "?"} · CVSS ${x.cvss ?? "?"}<br><span class="muted">${(x.description||"").slice(0,140)}…</span></div>`],
-    ["CWEs", r.cwes, x => `<div class="row" onclick="loadCWE('${x.id}')"><b>${x.id}</b> — ${x.name}</div>`],
-    ["Packages", r.packages, x => `<div class="row" onclick="loadPackage('${x.ecosystem}','${x.name}')"><b>${x.name}</b> <span class="muted">${x.ecosystem}</span></div>`],
-    ["AI Threats", r.ai_threats, x => `<div class="row" onclick="loadAIThreat('${x.id}')"><b>${x.id}</b> — ${x.name} <span class="muted">${x.framework}</span></div>`],
+    ["CVEs", r.cves, x => `<div class="row" data-action="cve" data-id="${attr(x.id)}"><b>${escapeHtml(x.id)}</b> · ${escapeHtml(x.severity || "?")} · CVSS ${escapeHtml(x.cvss ?? "?")}<br><span class="muted">${escapeHtml((x.description||"").slice(0,140))}…</span></div>`],
+    ["CWEs", r.cwes, x => `<div class="row" data-action="cwe" data-id="${attr(x.id)}"><b>${escapeHtml(x.id)}</b> — ${escapeHtml(x.name)}</div>`],
+    ["Packages", r.packages, x => `<div class="row" data-action="package" data-eco="${attr(x.ecosystem)}" data-name="${attr(x.name)}"><b>${escapeHtml(x.name)}</b> <span class="muted">${escapeHtml(x.ecosystem)}</span></div>`],
+    ["AI Threats", r.ai_threats, x => `<div class="row" data-action="ai" data-id="${attr(x.id)}"><b>${escapeHtml(x.id)}</b> — ${escapeHtml(x.name)} <span class="muted">${escapeHtml(x.framework)}</span></div>`],
   ];
   let any = false;
   groups.forEach(([title, items, render]) => {
@@ -139,31 +139,31 @@ function renderResults(r) {
 async function loadCVE(id) {
   const d = await fetch(`${API}/cve/${id}`).then(r => r.ok ? r.json() : Promise.reject(r.status));
   const c = d.cve;
-  const cwes = d.cwes.map(w => `<span class="chip" onclick="loadCWE('${w.id}')">${w.id}${w.name ? ' — '+w.name : ''}</span>`).join("");
-  const layers = d.layers.map(l => `<span class="chip layer" onclick="loadOSI(${l.number})">L${l.number} ${l.name}</span>`).join("");
+  const cwes = d.cwes.map(w => `<span class="chip" data-action="cwe" data-id="${attr(w.id)}">${escapeHtml(w.id)}${w.name ? ' — '+escapeHtml(w.name) : ''}</span>`).join("");
+  const layers = d.layers.map(l => `<span class="chip layer" data-action="osi" data-layer="${attr(l.number)}">L${escapeHtml(l.number)} ${escapeHtml(l.name)}</span>`).join("");
   const pkgs = d.packages.map(p => `
       <div class="pkg-row">
-        <span class="eco">${p.ecosystem}</span>
-        <span><a href="#" onclick="loadPackage('${p.ecosystem}','${p.name}');return false;">${p.name}</a>
-        ${p.affected?.length ? `<span class="muted"> · affected: ${p.affected.join(', ')}</span>` : ''}
-        ${p.fixed?.length ? `<span class="muted"> · fixed: ${p.fixed.join(', ')}</span>` : ''}
+        <span class="eco">${escapeHtml(p.ecosystem)}</span>
+        <span><a href="#" data-action="package" data-eco="${attr(p.ecosystem)}" data-name="${attr(p.name)}">${escapeHtml(p.name)}</a>
+        ${p.affected?.length ? `<span class="muted"> · affected: ${escapeHtml(p.affected.join(', '))}</span>` : ''}
+        ${p.fixed?.length ? `<span class="muted"> · fixed: ${escapeHtml(p.fixed.join(', '))}</span>` : ''}
         </span>
       </div>`).join("") || `<span class="muted">No package mappings yet — run the OSV/GHSA ingester.</span>`;
   const pocs = d.pocs.length ? d.pocs.map(p => `
       <div class="poc-block">
-        <a href="${p.url}" target="_blank">${p.url}</a> <span class="muted">[${p.source}${p.language?'/'+p.language:''}]</span>
+        <a href="${attr(_safeUrl(p.url))}" target="_blank" rel="noopener noreferrer">${escapeHtml(p.url)}</a> <span class="muted">[${escapeHtml(p.source)}${p.language?'/'+escapeHtml(p.language):''}]</span>
         ${p.snippet ? `<pre>${escapeHtml(p.snippet)}</pre>` : ''}
-      </div>`).join("") : `<span class="muted">No public PoC found yet — run <code>python -m ingest.poc ${c.id}</code>.</span>`;
-  const ai = d.ai_threats.length ? d.ai_threats.map(a => `<span class="chip" onclick="loadAIThreat('${a.id}')">${a.framework}: ${a.id} — ${a.name}</span>`).join("") : "";
+      </div>`).join("") : `<span class="muted">No public PoC found yet — run <code>python -m ingest.poc ${escapeHtml(c.id)}</code>.</span>`;
+  const ai = d.ai_threats.length ? d.ai_threats.map(a => `<span class="chip" data-action="ai" data-id="${attr(a.id)}">${escapeHtml(a.framework)}: ${escapeHtml(a.id)} — ${escapeHtml(a.name)}</span>`).join("") : "";
 
   const r = d.risk;
   const reasons = (r.explanation || []).map(e => `· ${e}`).join("<br>");
   const html = `
     <div class="cve-card">
-      <h2>${c.id}</h2>
-      <span class="severity-pill ${c.severity}">${c.severity || 'UNKNOWN'}</span>
-      ${c.cvss_score ? `<span class="muted"> · CVSS ${c.cvss_score}</span>` : ''}
-      ${c.published ? `<span class="muted"> · published ${c.published.slice(0,10)}</span>` : ''}
+      <h2>${escapeHtml(c.id)}</h2>
+      <span class="severity-pill ${attr(c.severity)}">${escapeHtml(c.severity || 'UNKNOWN')}</span>
+      ${c.cvss_score ? `<span class="muted"> · CVSS ${escapeHtml(c.cvss_score)}</span>` : ''}
+      ${c.published ? `<span class="muted"> · published ${escapeHtml(c.published.slice(0,10))}</span>` : ''}
       <div class="desc">${escapeHtml(c.description || '')}</div>
 
       <div class="section-h">OSI Layers</div><div class="chips">${layers || '<span class="muted">—</span>'}</div>
@@ -187,14 +187,14 @@ async function loadCVE(id) {
       <div class="section-h">Affected Packages (${d.packages.length})</div>${pkgs}
       <div class="section-h">Public PoCs (${d.pocs.length})</div>${pocs}
 
-      ${(c.references && c.references.length) ? `<div class="section-h">References</div><div class="chips">${c.references.slice(0,8).map(u=>`<a class="chip" href="${u}" target="_blank">${new URL(u).hostname}</a>`).join('')}</div>` : ''}
+      ${(c.references && c.references.length) ? `<div class="section-h">References</div><div class="chips">${c.references.slice(0,8).map(u => { const safe = _safeUrl(u); return safe ? `<a class="chip" href="${attr(safe)}" target="_blank" rel="noopener noreferrer">${escapeHtml(_hostname(safe))}</a>` : ''; }).join('')}</div>` : ''}
 
       <div class="action-bar">
-        <button onclick="loadStory('${c.id}')">📖 LLM Story</button>
-        <button onclick="loadChain('${c.id}')">⚡ Attack Chain</button>
-        <button onclick="loadTwins('${c.id}')">🧬 Patch Twins</button>
-        <button onclick="loadDefense('${c.id}')">🛡 Defense Recipes</button>
-        <button onclick="loadSimilar('${c.id}')">🔍 Similar (DNA)</button>
+        <button data-action="story"   data-id="${attr(c.id)}">📖 LLM Story</button>
+        <button data-action="chain"   data-id="${attr(c.id)}">⚡ Attack Chain</button>
+        <button data-action="twins"   data-id="${attr(c.id)}">🧬 Patch Twins</button>
+        <button data-action="defense" data-id="${attr(c.id)}">🛡 Defense Recipes</button>
+        <button data-action="similar" data-id="${attr(c.id)}">🔍 Similar (DNA)</button>
       </div>
       <div id="extra"></div>
     </div>`;
@@ -238,10 +238,10 @@ async function loadChain(cve) {
         <div><b>Chain #${i+1}</b> — score <span class="twin-score">${c.score}</span> · layers ${c.layers_traversed.join(', ')} · depth ${c.length}</div>
         ${c.steps.map(s => `
           <div class="step">
-            <span class="arrow">${s.layer_from ? `L${s.layer_from}→L${s.layer_to}` : `L${s.layer_to}`}</span>
-            <a href="#" onclick="loadCVE('${s.cve}');return false;">${s.cve}</a>
-            <span class="muted"> · ${s.severity || '?'} · risk ${s.risk}</span><br>
-            <span class="muted">${s.transition || ''}</span>
+            <span class="arrow">${s.layer_from ? `L${escapeHtml(s.layer_from)}→L${escapeHtml(s.layer_to)}` : `L${escapeHtml(s.layer_to)}`}</span>
+            <a href="#" data-action="cve" data-id="${attr(s.cve)}">${escapeHtml(s.cve)}</a>
+            <span class="muted"> · ${escapeHtml(s.severity || '?')} · risk ${escapeHtml(s.risk)}</span><br>
+            <span class="muted">${escapeHtml(s.transition || '')}</span>
           </div>`).join("")}
       </div>`).join("") || `<div class="muted">No chains derivable from this seed (likely needs more graph context — re-run OSV/GHSA ingest).</div>`;
     $("#chainBox").outerHTML = html;
@@ -261,11 +261,11 @@ async function loadTwins(cve) {
     return;
   }
   const rows = tw.map(t => `
-    <div class="twin-row" onclick="loadCVE('${t.id}')">
-      <span><b>${t.id}</b></span>
-      <span>${t.severity || '?'}</span>
-      <span class="twin-score">${t.twin_score}</span>
-      <span class="muted">${(t.description || '').slice(0,160)}…</span>
+    <div class="twin-row" data-action="cve" data-id="${attr(t.id)}">
+      <span><b>${escapeHtml(t.id)}</b></span>
+      <span>${escapeHtml(t.severity || '?')}</span>
+      <span class="twin-score">${escapeHtml(t.twin_score)}</span>
+      <span class="muted">${escapeHtml((t.description || '').slice(0,160))}…</span>
     </div>`).join("");
   $("#twinsBox").outerHTML = rows;
 }
@@ -301,11 +301,11 @@ async function loadSimilar(cve) {
     return;
   }
   const html = ns.map(n => `
-    <div class="twin-row" onclick="loadCVE('${n.id}')">
-      <span><b>${n.id}</b></span>
-      <span>${n.severity || '?'}</span>
-      <span class="twin-score">${(n.score||0).toFixed(3)}</span>
-      <span class="muted">cwe ${(n.cwes||[]).join(',') || '—'} · L${(n.layers||[]).join(',') || '—'}</span>
+    <div class="twin-row" data-action="cve" data-id="${attr(n.id)}">
+      <span><b>${escapeHtml(n.id)}</b></span>
+      <span>${escapeHtml(n.severity || '?')}</span>
+      <span class="twin-score">${escapeHtml((n.score||0).toFixed(3))}</span>
+      <span class="muted">cwe ${escapeHtml((n.cwes||[]).join(',') || '—')} · L${escapeHtml((n.layers||[]).join(',') || '—')}</span>
     </div>`).join("");
   $("#simBox").outerHTML = html;
 }
@@ -334,10 +334,10 @@ async function uploadSbom() {
   const chains = (r.attack_chains || []).map((c,i) => `
     <div class="chain-card">
       <div><b>Chain #${i+1}</b> — score <span class="twin-score">${c.score}</span> · layers ${c.layers_traversed.join(', ')} · depth ${c.length}</div>
-      ${c.steps.map(s => `<div class="step"><span class="arrow">${s.layer_from?`L${s.layer_from}→L${s.layer_to}`:`L${s.layer_to}`}</span> <a href="#" onclick="document.querySelector('[data-mode=explore]').click(); loadCVE('${s.cve}'); return false;">${s.cve}</a> · ${s.severity || '?'} · ${s.transition || ''}</div>`).join("")}
+      ${c.steps.map(s => `<div class="step"><span class="arrow">${s.layer_from?`L${escapeHtml(s.layer_from)}→L${escapeHtml(s.layer_to)}`:`L${escapeHtml(s.layer_to)}`}</span> <a href="#" data-action="cve" data-explore="1" data-id="${attr(s.cve)}">${escapeHtml(s.cve)}</a> · ${escapeHtml(s.severity || '?')} · ${escapeHtml(s.transition || '')}</div>`).join("")}
     </div>`).join("") || '<div class="muted">No attack chains derivable for this stack.</div>';
   const pkgRows = (r.packages || []).filter(p=>p.cves?.length).map(p =>
-    `<div class="pkg-row"><span class="eco">${p.ecosystem}</span><span><b>${p.name}</b> <span class="muted">· ${p.cves.length} CVE(s)</span></span></div>`).join("") || '<div class="muted">No vulnerable packages found.</div>';
+    `<div class="pkg-row"><span class="eco">${escapeHtml(p.ecosystem)}</span><span><b>${escapeHtml(p.name)}</b> <span class="muted">· ${escapeHtml(p.cves.length)} CVE(s)</span></span></div>`).join("") || '<div class="muted">No vulnerable packages found.</div>';
   $("#sbomResult").innerHTML = `
     <div class="sbom-summary">
       <div class="stat"><div class="num">${r.component_count}</div><div class="lbl">parsed</div></div>
@@ -548,8 +548,8 @@ async function refreshHipaaSummary() {
   const pkgs = (r.phi_packages || []).slice(0,12).map(p =>
     `<div class="row"><b>${p.name}</b> <span class="muted">${p.ecosystem} · ${p.cve_count} CVE(s)</span></div>`).join("");
   const cves = (r.phi_cves || []).slice(0,15).map(c =>
-    `<div class="row" onclick="document.querySelector('[data-mode=explore]').click(); loadCVE('${c.id}')">
-      <b>${c.id}</b> · ${c.severity || '?'} · CVSS ${c.cvss || '?'} · L${(c.layers||[]).join(',')}</div>`).join("");
+    `<div class="row" data-action="cve" data-explore="1" data-id="${attr(c.id)}">
+      <b>${escapeHtml(c.id)}</b> · ${escapeHtml(c.severity || '?')} · CVSS ${escapeHtml(c.cvss || '?')} · L${escapeHtml((c.layers||[]).join(','))}</div>`).join("");
   const cap = (r.regulatory_capabilities || []).map(rc => `
     <div class="gap-card ${rc.coverage_pct >= 80 ? 'LOW' : rc.coverage_pct >= 30 ? 'MEDIUM' : 'HIGH'}">
       <span class="cap">${rc.capability}</span>
@@ -709,12 +709,12 @@ async function refreshKev(force) {
     return;
   }
   const rows = r.cves.map(c => `
-    <div class="kev-row" onclick="document.querySelector('[data-mode=explore]').click(); loadCVE('${c.id}')">
-      <span><b>${c.id}</b></span>
-      <span>${c.severity || '?'}</span>
-      <span>added ${(c.added||'').slice(0,10)} · L${(c.layers||[]).join(',') || '—'}</span>
-      <span>${c.cvss || '?'}</span>
-      <span class="${c.ransomware === 'Known' ? 'ransomware' : ''}">${c.ransomware || ''}</span>
+    <div class="kev-row" data-action="cve" data-explore="1" data-id="${attr(c.id)}">
+      <span><b>${escapeHtml(c.id)}</b></span>
+      <span>${escapeHtml(c.severity || '?')}</span>
+      <span>added ${escapeHtml((c.added||'').slice(0,10))} · L${escapeHtml((c.layers||[]).join(',') || '—')}</span>
+      <span>${escapeHtml(c.cvss || '?')}</span>
+      <span class="${c.ransomware === 'Known' ? 'ransomware' : ''}">${escapeHtml(c.ransomware || '')}</span>
     </div>`).join("");
   $("#kevResult").innerHTML = `<div class="muted">${r.count} actively-exploited vulnerabilities (CISA KEV)</div>${rows}`;
 }
@@ -724,15 +724,15 @@ async function loadCWE(id) {
   if (!id.toUpperCase().startsWith("CWE-")) id = "CWE-" + id;
   const d = await fetch(`${API}/cwe/${id}`).then(r => r.ok ? r.json() : Promise.reject(r.status));
   const w = d.cwe;
-  const layers = d.layers.map(l => `<span class="chip layer" onclick="loadOSI(${l.number})">L${l.number} ${l.name}</span>`).join("");
-  const parents = d.parents.filter(p => p.id).map(p => `<span class="chip" onclick="loadCWE('${p.id}')">${p.id} — ${p.name||''}</span>`).join("") || '<span class="muted">—</span>';
-  const children = d.children.filter(c => c.id).map(c => `<span class="chip" onclick="loadCWE('${c.id}')">${c.id} — ${c.name||''}</span>`).join("") || '<span class="muted">—</span>';
-  const cves = d.cves.slice(0,30).map(c => `<span class="chip" onclick="loadCVE('${c.id}')">${c.id} (${c.severity||'?'})</span>`).join("");
+  const layers = d.layers.map(l => `<span class="chip layer" data-action="osi" data-layer="${attr(l.number)}">L${escapeHtml(l.number)} ${escapeHtml(l.name)}</span>`).join("");
+  const parents = d.parents.filter(p => p.id).map(p => `<span class="chip" data-action="cwe" data-id="${attr(p.id)}">${escapeHtml(p.id)} — ${escapeHtml(p.name||'')}</span>`).join("") || '<span class="muted">—</span>';
+  const children = d.children.filter(c => c.id).map(c => `<span class="chip" data-action="cwe" data-id="${attr(c.id)}">${escapeHtml(c.id)} — ${escapeHtml(c.name||'')}</span>`).join("") || '<span class="muted">—</span>';
+  const cves = d.cves.slice(0,30).map(c => `<span class="chip" data-action="cve" data-id="${attr(c.id)}">${escapeHtml(c.id)} (${escapeHtml(c.severity||'?')})</span>`).join("");
   $("#detail").innerHTML = `
     <div class="cve-card">
-      <h2>${w.id} — ${w.name||''}</h2>
-      <span class="severity-pill MEDIUM">${w.abstraction||''}</span>
-      <span class="muted"> · ${w.status||''}</span>
+      <h2>${escapeHtml(w.id)} — ${escapeHtml(w.name||'')}</h2>
+      <span class="severity-pill MEDIUM">${escapeHtml(w.abstraction||'')}</span>
+      <span class="muted"> · ${escapeHtml(w.status||'')}</span>
       <div class="desc">${escapeHtml(w.description||'')}</div>
       <div class="section-h">OSI Layers</div><div class="chips">${layers}</div>
       <div class="section-h">Parent CWEs</div><div class="chips">${parents}</div>
@@ -746,15 +746,15 @@ async function loadPackage(eco, name) {
   const d = await fetch(`${API}/package/${eco}/${encodeURIComponent(name)}`).then(r => r.ok ? r.json() : Promise.reject(r.status));
   const p = d.pkg;
   const cves = d.cves.map(c => `
-    <div class="row" onclick="loadCVE('${c.id}')"><b>${c.id}</b> · ${c.severity||'?'} · CVSS ${c.cvss_score??'?'}
-      ${c.affected?.length ? `<br><span class="muted">affected ${c.affected.join(', ')}</span>` : ''}
-      ${c.fixed?.length ? `<span class="muted"> · fixed ${c.fixed.join(', ')}</span>` : ''}
+    <div class="row" data-action="cve" data-id="${attr(c.id)}"><b>${escapeHtml(c.id)}</b> · ${escapeHtml(c.severity||'?')} · CVSS ${escapeHtml(c.cvss_score??'?')}
+      ${c.affected?.length ? `<br><span class="muted">affected ${escapeHtml(c.affected.join(', '))}</span>` : ''}
+      ${c.fixed?.length ? `<span class="muted"> · fixed ${escapeHtml(c.fixed.join(', '))}</span>` : ''}
     </div>`).join("") || '<span class="muted">No CVEs linked.</span>';
   $("#detail").innerHTML = `
     <div class="cve-card">
-      <h2>${p.name}</h2>
-      <span class="severity-pill HIGH">${p.ecosystem}</span>
-      <div class="muted">${p.purl}</div>
+      <h2>${escapeHtml(p.name)}</h2>
+      <span class="severity-pill HIGH">${escapeHtml(p.ecosystem)}</span>
+      <div class="muted">${escapeHtml(p.purl)}</div>
       <div class="section-h">CVEs affecting this package (${d.cves.length})</div>${cves}
     </div>`;
 }
@@ -763,10 +763,10 @@ async function loadPackage(eco, name) {
 async function loadOSI(layerNum) {
   const d = await fetch(`${API}/osi/${layerNum}`).then(r => r.json());
   const t = d.totals || {};
-  const cveLine = (c) => `<div class="row" onclick="loadCVE('${c.id}')"><b>${c.id}</b> · ${c.severity||'?'} · CVSS ${c.cvss_score ?? '?'}</div>`;
+  const cveLine = (c) => `<div class="row" data-action="cve" data-id="${attr(c.id)}"><b>${escapeHtml(c.id)}</b> · ${escapeHtml(c.severity||'?')} · CVSS ${escapeHtml(c.cvss_score ?? '?')}</div>`;
   const cves = (d.cves || []).map(cveLine).join("") || '<span class="muted">none yet</span>';
-  const cwes = (d.cwes || []).map(c=>`<div class="row" onclick="loadCWE('${c.id}')"><b>${c.id}</b> — ${c.name||''}</div>`).join("") || '<span class="muted">none yet</span>';
-  const ai = (d.ai_threats || []).map(a=>`<div class="row" onclick="loadAIThreat('${a.id}')"><b>${a.id}</b> — ${a.name} <span class="muted">${a.framework}</span></div>`).join("") || '<span class="muted">—</span>';
+  const cwes = (d.cwes || []).map(c=>`<div class="row" data-action="cwe" data-id="${attr(c.id)}"><b>${escapeHtml(c.id)}</b> — ${escapeHtml(c.name||'')}</div>`).join("") || '<span class="muted">none yet</span>';
+  const ai = (d.ai_threats || []).map(a=>`<div class="row" data-action="ai" data-id="${attr(a.id)}"><b>${escapeHtml(a.id)}</b> — ${escapeHtml(a.name)} <span class="muted">${escapeHtml(a.framework)}</span></div>`).join("") || '<span class="muted">—</span>';
   const cveHdr = t.cve_total != null ? `CVEs at this layer <span class="muted">(showing top ${(d.cves||[]).length} of ${t.cve_total} by CVSS)</span>` : 'CVEs at this layer';
   const cweHdr = t.cwe_total != null ? `CWEs at this layer <span class="muted">(${t.cwe_total})</span>` : 'CWEs at this layer';
   const aiHdr  = t.ai_total  != null ? `AI Threats at this layer <span class="muted">(${t.ai_total})</span>` : 'AI Threats at this layer';
@@ -785,8 +785,8 @@ async function loadAIThreat(id) {
   const list = await fetch(`${API}/ai-vulns`).then(r => r.json());
   const t = list.find(x => x.threat.id === id);
   if (!t) return;
-  const layers = (t.layers||[]).filter(Boolean).map(n => `<span class="chip layer" onclick="loadOSI(${n})">L${n} ${LAYER_NAMES[n]}</span>`).join("");
-  const cves = (t.cves||[]).filter(Boolean).map(c => `<span class="chip" onclick="loadCVE('${c}')">${c}</span>`).join("") || '<span class="muted">—</span>';
+  const layers = (t.layers||[]).filter(Boolean).map(n => `<span class="chip layer" data-action="osi" data-layer="${attr(n)}">L${escapeHtml(n)} ${escapeHtml(LAYER_NAMES[n])}</span>`).join("");
+  const cves = (t.cves||[]).filter(Boolean).map(c => `<span class="chip" data-action="cve" data-id="${attr(c)}">${escapeHtml(c)}</span>`).join("") || '<span class="muted">—</span>';
   $("#detail").innerHTML = `
     <div class="cve-card">
       <h2>${t.threat.id} — ${t.threat.name}</h2>
@@ -908,5 +908,48 @@ async function drawGraph(cveId) {
 
 /* ---------- helpers ---------- */
 function escapeHtml(s) {
-  return (s || "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+  return String(s ?? "").replace(/[&<>"'`/]/g, c => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;","`":"&#96;","/":"&#47;"
+  }[c]));
 }
+// Same as escapeHtml — kept for self-documenting attribute interpolations.
+const attr = escapeHtml;
+
+// Reject javascript:/data: URLs from server-supplied references before they
+// land inside an <a href="…"> attribute.
+function _safeUrl(u) {
+  if (!u || typeof u !== "string") return "";
+  try {
+    const parsed = new URL(u, window.location.origin);
+    if (!["http:", "https:"].includes(parsed.protocol)) return "";
+    return parsed.toString();
+  } catch { return ""; }
+}
+function _hostname(u) {
+  try { return new URL(u).hostname; } catch { return u; }
+}
+
+// Single delegated click handler. Replaces inline onclick="loadX('${id}')"
+// patterns that previously interpolated server data into JS strings (XSS).
+document.addEventListener("click", (e) => {
+  const el = e.target.closest("[data-action]");
+  if (!el) return;
+  const action = el.dataset.action;
+  if (el.dataset.explore === "1") {
+    const exp = document.querySelector('.mode-btn[data-mode="explore"]');
+    if (exp && !exp.classList.contains("active")) exp.click();
+  }
+  const id = el.dataset.id;
+  switch (action) {
+    case "cve":     e.preventDefault(); loadCVE(id); break;
+    case "cwe":     e.preventDefault(); loadCWE(id); break;
+    case "osi":     e.preventDefault(); loadOSI(parseInt(el.dataset.layer, 10)); break;
+    case "ai":      e.preventDefault(); loadAIThreat(id); break;
+    case "package": e.preventDefault(); loadPackage(el.dataset.eco, el.dataset.name); break;
+    case "story":   loadStory(id); break;
+    case "chain":   loadChain(id); break;
+    case "twins":   loadTwins(id); break;
+    case "defense": loadDefense(id); break;
+    case "similar": loadSimilar(id); break;
+  }
+});

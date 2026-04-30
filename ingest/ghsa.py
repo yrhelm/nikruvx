@@ -41,22 +41,26 @@ def _headers() -> dict:
 def ingest_pages(pages: int = 5, severity: str | None = None) -> int:
     count = 0
     skipped = 0
+    next_url: str | None = GHSA_URL
+    next_params: dict | None = {"per_page": 100}
+    if severity:
+        next_params["severity"] = severity
     with http_client(headers=_headers()) as c, Progress() as bar:
         task = bar.add_task("[cyan]GHSA", total=pages)
-        for page in range(1, pages + 1):
-            params = {"per_page": 100, "page": page}
-            if severity:
-                params["severity"] = severity
-            r = c.get(GHSA_URL, params=params)
+        for _ in range(pages):
+            if not next_url:
+                break
+            r = c.get(next_url, params=next_params)
+            # Only the first request uses params; subsequent next URLs are absolute.
+            next_params = None
             if r.status_code != 200:
                 console.print(f"[red]GHSA HTTP {r.status_code}: {r.text[:200]}")
                 break
             try:
                 advisories = r.json()
             except Exception as e:
-                console.print(f"[red]GHSA: bad JSON on page {page}: {e}")
+                console.print(f"[red]GHSA: bad JSON: {e}")
                 break
-            # GitHub may return a dict (error envelope) or a list (data).
             if isinstance(advisories, dict):
                 console.print(f"[yellow]GHSA: unexpected dict response: {str(advisories)[:200]}")
                 break
@@ -72,9 +76,26 @@ def ingest_pages(pages: int = 5, severity: str | None = None) -> int:
                     skipped += 1
                     console.print(f"[yellow]  skip {adv.get('ghsa_id') or adv.get('cve_id') or '?'}: {e}")
             bar.update(task, advance=1)
+            # Follow GitHub's RFC-5988 Link header for the next page.
+            next_url = _next_link(r.headers.get("Link"))
             polite_sleep(0.5)
     console.print(f"[green]GHSA ingested {count} advisories ({skipped} skipped)")
     return count
+
+
+def _next_link(link_header: str | None) -> str | None:
+    """Parse RFC-5988 Link header and return the URL for rel=\"next\"."""
+    if not link_header:
+        return None
+    for part in link_header.split(","):
+        section = part.strip().split(";")
+        if len(section) < 2:
+            continue
+        url = section[0].strip().lstrip("<").rstrip(">")
+        for attr in section[1:]:
+            if attr.strip().lower() == 'rel="next"':
+                return url
+    return None
 
 
 def _coerce_str_list(field) -> list[str]:
