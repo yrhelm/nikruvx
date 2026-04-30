@@ -174,11 +174,16 @@ def _upsert(record: dict) -> None:
 
 
 def _load_atlas_live() -> list[dict]:
-    """Pull the live ATLAS YAML and return a list of techniques."""
+    """Pull the live ATLAS YAML and return a list of techniques.
+    Requires PyYAML; without it we fall back loudly to the embedded subset."""
     try:
         import yaml  # optional
     except ImportError:
-        console.print("[yellow]PyYAML not installed; using embedded ATLAS subset.")
+        console.print(
+            "[red]--refresh requested but PyYAML is not installed.\n"
+            "  Install it (`pip install pyyaml`) to pull the live MITRE ATLAS catalog.\n"
+            "  Falling back to the embedded ATLAS subset for this run."
+        )
         return ATLAS_CORE
     with http_client(timeout=30) as c:
         r = c.get(ATLAS_YAML_URL)
@@ -213,7 +218,8 @@ def ingest(refresh: bool = False) -> int:
 
 def main() -> None:
     p = argparse.ArgumentParser(description="Ingest AI/ML vulnerabilities (ATLAS + OWASP LLM Top 10)")
-    p.add_argument("--refresh", action="store_true", help="Pull live MITRE ATLAS YAML")
+    p.add_argument("--refresh", action="store_true",
+                   help="Pull live MITRE ATLAS YAML (requires `pip install pyyaml`)")
     args = p.parse_args()
     ingest(args.refresh)
 

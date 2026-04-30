@@ -84,7 +84,8 @@ def _band(score: float) -> str:
 
 
 def _age_factor(published: datetime | str | None) -> float:
-    """Recent CVEs get up to 1.0; old ones decay toward 0.7."""
+    """Recent CVEs get up to 1.0; old ones decay toward 0.7.
+    Clamped to [0.7, 1.0] so future-dated rows can't push the multiplier > 1."""
     if published is None:
         return 0.85
     if isinstance(published, str):
@@ -95,7 +96,7 @@ def _age_factor(published: datetime | str | None) -> float:
     if published.tzinfo is None:
         published = published.replace(tzinfo=timezone.utc)
     age_years = (datetime.now(timezone.utc) - published).days / 365.25
-    return max(0.7, 1.0 - 0.04 * age_years)  # 0.04 per year, floor at 0.7
+    return max(0.7, min(1.0, 1.0 - 0.04 * age_years))
 
 
 def _normalize_cwe(cwe: str) -> str:
@@ -118,7 +119,9 @@ def score(inp: RiskInput) -> RiskResult:
     if cwe_ids:
         sevs = [CWE_INHERENT_SEVERITY.get(c, DEFAULT_CWE_SEVERITY) for c in cwe_ids]
         cwe_sev = sum(sevs) / len(sevs)
-        worst = max(zip(sevs, cwe_ids))
+        # Compare on severity only; without `key=` the tuple compare falls
+        # back to lexical CWE-id ordering on ties ("CWE-99" > "CWE-100").
+        worst = max(zip(sevs, cwe_ids), key=lambda x: x[0])
         explanation.append(f"{worst[1]} weakness inherent severity {worst[0]}")
     else:
         cwe_sev = DEFAULT_CWE_SEVERITY

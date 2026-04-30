@@ -33,7 +33,7 @@ def parse_any(content: str | bytes, hint: str | None = None) -> list[Policy]:
         return generic.parse_nftables(text)
     if "modsec" in h or "SecRule" in text[:500]:
         return generic.parse_modsecurity(text)
-    if "pfsense" in h or text.lstrip().startswith("<?xml") and "pfsense" in text[:500].lower():
+    if "pfsense" in h or (text.lstrip().startswith("<?xml") and "pfsense" in text[:500].lower()):
         return generic.parse_pfsense(text)
 
     # ---------- JSON-based platforms ----------
@@ -60,7 +60,7 @@ def _route_json(doc: dict | list, hint: str | None) -> list[Policy]:
         if "SecurityGroups" in doc:
             return aws.parse_security_groups(doc)
         # AWS WAFv2 web ACL
-        if "WebACL" in doc or "WebACLs" in doc or "Rules" in doc and "VisibilityConfig" in flat:
+        if "WebACL" in doc or "WebACLs" in doc or ("Rules" in doc and "VisibilityConfig" in flat):
             return aws.parse_waf(doc)
         # AWS S3 bucket policy returned by GetBucketPolicy { "Policy": "..." }
         if "Policy" in doc and isinstance(doc["Policy"], str) and "Statement" in doc["Policy"]:

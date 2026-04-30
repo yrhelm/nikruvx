@@ -41,9 +41,8 @@ publishing a fix, and coordinating disclosure with you.
 
 If you prefer email, contact: **yrhelm@outlook.com**
 
-
-For sensitive details, please encrypt with our PGP key (fingerprint to be
-published once issued).
+For sensitive details, please prefer **GitHub Private Vulnerability Reporting**
+(end-to-end encrypted in transit and only visible to maintainers).
 
 ---
 
@@ -185,11 +184,12 @@ NikruvX should follow these baseline practices:
 
 ---
 
-## PGP Key
+## Encrypted Reports
 
-A PGP key for encrypted email reports will be published here once
-generated. Until then, please prefer GitHub Private Vulnerability
-Reporting for sensitive details.
+Use **GitHub Private Vulnerability Reporting** for any sensitive details.
+We do not currently maintain a project PGP key; if you require email +
+encryption, contact us first via the channels above to coordinate keys
+out-of-band.
 
 ---
 

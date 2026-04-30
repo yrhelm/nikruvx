@@ -67,18 +67,74 @@ def _cve_id_from_record(rec: dict) -> str | None:
 def _cvss_from_record(rec: dict) -> tuple[float | None, str | None]:
     for sev in rec.get("severity", []) or []:
         if sev.get("type") in ("CVSS_V3", "CVSS_V31", "CVSS_V40"):
-            vec = sev.get("score")
-            # Score is the vector string in OSV; numeric base must be parsed.
-            return _base_score(vec), vec
+            score_field = sev.get("score")
+            if score_field is None:
+                continue
+            # Some records put the numeric score directly; most put the vector.
+            try:
+                return float(score_field), None
+            except (TypeError, ValueError):
+                pass
+            return _base_score(score_field), score_field
     return None, None
 
 
 def _base_score(vector: str | None) -> float | None:
-    if not vector:
+    """Compute CVSS v3.x base score from a vector string.
+
+    Returns None for unparseable input or v2/v4 vectors. Implements the
+    canonical FIRST.org formula (Specification §7.1) so we don't need
+    a third-party dependency. v4 is currently passed through as None
+    (different metrics; not yet supported here).
+    """
+    if not vector or not isinstance(vector, str):
         return None
-    # CVSSv3 vectors look like "CVSS:3.1/AV:N/AC:L/...". OSV doesn't include
-    # the numeric score; we leave it None unless the API gives us one.
-    return None
+    v = vector.strip()
+    if not v.upper().startswith("CVSS:3"):
+        return None
+    parts = {}
+    try:
+        for token in v.split("/")[1:]:
+            k, _, val = token.partition(":")
+            if k and val:
+                parts[k.strip().upper()] = val.strip().upper()
+    except Exception:
+        return None
+
+    # Required base metrics
+    required = ("AV", "AC", "PR", "UI", "S", "C", "I", "A")
+    if not all(k in parts for k in required):
+        return None
+
+    av = {"N": 0.85, "A": 0.62, "L": 0.55, "P": 0.2}.get(parts["AV"])
+    ac = {"L": 0.77, "H": 0.44}.get(parts["AC"])
+    ui = {"N": 0.85, "R": 0.62}.get(parts["UI"])
+    scope_changed = parts["S"] == "C"
+    pr_table = {
+        "N": 0.85,
+        "L": 0.68 if scope_changed else 0.62,
+        "H": 0.50 if scope_changed else 0.27,
+    }
+    pr = pr_table.get(parts["PR"])
+    cia = {"H": 0.56, "L": 0.22, "N": 0.0}
+    c, i, a = cia.get(parts["C"]), cia.get(parts["I"]), cia.get(parts["A"])
+    if None in (av, ac, ui, pr, c, i, a):
+        return None
+
+    iss = 1 - (1 - c) * (1 - i) * (1 - a)
+    impact = 7.52 * (iss - 0.029) - 3.25 * (iss - 0.02) ** 15 if scope_changed else 6.42 * iss
+    exploitability = 8.22 * av * ac * pr * ui
+
+    if impact <= 0:
+        return 0.0
+
+    if scope_changed:
+        base = min(1.08 * (impact + exploitability), 10.0)
+    else:
+        base = min(impact + exploitability, 10.0)
+    # CVSS round-up to nearest 0.1
+    import math
+    return math.ceil(base * 10) / 10
 
 
 def query_package(ecosystem: str, name: str) -> list[dict]:

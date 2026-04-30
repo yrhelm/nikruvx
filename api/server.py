@@ -16,13 +16,18 @@ Endpoints:
   GET  /api/stats                -> Top-level counts for the home dashboard
 """
 from __future__ import annotations
+import os as _os
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse, Response
+from fastapi.requests import Request
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as _StarletteHTTPException
 from pydantic import BaseModel
 
 from config import settings
@@ -39,18 +44,67 @@ from ingest.policies.upsert import upsert_policies
 
 UI_DIR = Path(__file__).resolve().parent.parent / "ui"
 
-app = FastAPI(title="Cybersecurity Nexus", version="1.0.0",
-              description="Graph-powered CVE/CWE/Package/AI-Threat nexus across all 7 OSI layers")
+# Upload size caps (bytes). Override via env if you really need larger.
+_SBOM_MAX_BYTES = int(_os.getenv("NEXUS_SBOM_MAX_BYTES", str(5 * 1024 * 1024)))
+_POLICY_MAX_BYTES = int(_os.getenv("NEXUS_POLICY_MAX_BYTES", str(2 * 1024 * 1024)))
+_CLASSIFY_MAX_CHARS = int(_os.getenv("NEXUS_CLASSIFY_MAX_CHARS", "10000"))
+_DEBUG_ERRORS = _os.getenv("NEXUS_DEBUG_ERRORS", "").lower() in ("1", "true", "yes")
 
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    # Startup: nothing yet (driver lazily initialized on first request).
+    yield
+    # Shutdown: close the Neo4j driver cleanly.
+    close_driver()
+
+
+app = FastAPI(title="Cybersecurity Nexus", version="1.0.0",
+              description="Graph-powered CVE/CWE/Package/AI-Threat nexus across all 7 OSI layers",
+              lifespan=_lifespan)
+
+# CORS: same-origin by default; widen via NEXUS_CORS_ORIGINS env (comma-sep).
+_cors_origins = [o.strip() for o in (settings.cors_origins or "").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
+    allow_origins=_cors_origins or [f"http://{settings.api_host}:{settings.api_port}"],
+    allow_methods=["GET", "POST", "DELETE", "PUT", "PATCH", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 
-@app.on_event("shutdown")
-def _shutdown() -> None:
-    close_driver()
+# --------------------------- Auth dependency -------------------------------
+def require_token(authorization: str | None = Header(default=None)) -> None:
+    """Gate mutating endpoints behind a bearer token if NEXUS_API_TOKEN is set.
+    If no token is configured, this is a no-op (local-dev convenience)."""
+    expected = settings.api_token
+    if not expected:
+        return
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(401, "missing bearer token")
+    presented = authorization.split(None, 1)[1].strip()
+    # constant-time comparison
+    import hmac
+    if not hmac.compare_digest(presented, expected):
+        raise HTTPException(403, "invalid token")
+
+
+# Mutation auth applied via middleware so every POST/DELETE/PUT is covered
+# regardless of when new endpoints are added later.
+_MUTATING_METHODS = {"POST", "DELETE", "PUT", "PATCH"}
+
+
+@app.middleware("http")
+async def _mutation_auth_mw(request, call_next):
+    if request.method in _MUTATING_METHODS and settings.api_token:
+        auth = request.headers.get("authorization", "")
+        if not auth.lower().startswith("bearer "):
+            return JSONResponse(status_code=401, content={"error": "missing bearer token"})
+        import hmac
+        presented = auth.split(None, 1)[1].strip()
+        if not hmac.compare_digest(presented, settings.api_token):
+            return JSONResponse(status_code=403, content={"error": "invalid token"})
+    return await call_next(request)
 
 
 # --------------------------- Static UI -------------------------------------
@@ -63,7 +117,6 @@ def index() -> FileResponse:
 def favicon():
     # 1x1 transparent SVG so the browser stops 404-ing
     svg = b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y="80" font-size="80">\xe2\xac\xa2</text></svg>'
-    from fastapi.responses import Response
     return Response(content=svg, media_type="image/svg+xml")
 
 
@@ -71,20 +124,26 @@ app.mount("/ui", StaticFiles(directory=UI_DIR), name="ui")
 
 
 # --------------------------- Global error handler --------------------------
-from fastapi.requests import Request
-from fastapi.exceptions import RequestValidationError
-
-
 @app.exception_handler(Exception)
 async def _generic_exc_handler(request: Request, exc: Exception):
+    # CRITICAL: do NOT swallow HTTPException — let FastAPI/Starlette emit the
+    # intended status code (404, 400, 503, ...). Without this guard every
+    # `raise HTTPException(404, ...)` was being rewritten to a 500.
+    if isinstance(exc, (HTTPException, _StarletteHTTPException)):
+        raise exc
+
     import traceback as _tb
-    body = {
-        "error": type(exc).__name__,
-        "message": str(exc),
-        "path": str(request.url.path),
-    }
-    # Print full trace to the server console for debugging
-    _tb.print_exc()
+    _tb.print_exc()  # full trace to server console
+
+    if _DEBUG_ERRORS:
+        body = {
+            "error": type(exc).__name__,
+            "message": str(exc),
+            "path": str(request.url.path),
+        }
+    else:
+        # Don't leak internal details (file paths, Cypher, target hosts, ...)
+        body = {"error": "internal_error", "path": str(request.url.path)}
     return JSONResponse(status_code=500, content=body)
 
 
@@ -132,31 +191,45 @@ def stats() -> dict:
 @app.get("/api/cve/{cve_id}")
 def get_cve(cve_id: str) -> dict:
     cve_id = cve_id.upper()
-    rows = run_read("""
-        MATCH (c:CVE {id: $id})
-        OPTIONAL MATCH (c)-[:CLASSIFIED_AS]->(w:CWE)
-        OPTIONAL MATCH (c)-[:MAPS_TO]->(l:OSILayer)
-        OPTIONAL MATCH (c)-[:HAS_POC]->(p:PoC)
-        OPTIONAL MATCH (c)-[r:AFFECTS]->(pk:Package)
-        OPTIONAL MATCH (a:AIThreat)-[:RELATED_TO]->(c)
-        RETURN c{.*} AS cve,
-               collect(DISTINCT w{.id, .name}) AS cwes,
-               collect(DISTINCT l{.number, .name}) AS layers,
-               collect(DISTINCT p{.url, .source, .language, .snippet}) AS pocs,
-               collect(DISTINCT {ecosystem: pk.ecosystem, name: pk.name,
-                                 affected: r.affected_versions, fixed: r.fixed_versions}) AS packages,
-               collect(DISTINCT a{.id, .name, .framework}) AS ai_threats
-    """, id=cve_id)
-    if not rows or not rows[0]["cve"]:
+    # Per-relationship queries (small, indexed) — replaces a single
+    # multi-OPTIONAL-MATCH that produced a Cartesian product of every
+    # CWE × layer × PoC × package × AI-threat for hot CVEs (Log4Shell etc.).
+    base = run_read("MATCH (c:CVE {id: $id}) RETURN c{.*} AS cve", id=cve_id)
+    if not base or not base[0].get("cve"):
         raise HTTPException(404, f"{cve_id} not found")
-    data = rows[0]
-    # Filter empty package rows
-    data["packages"] = [p for p in data["packages"] if p.get("name")]
-    data["pocs"] = [p for p in data["pocs"] if p.get("url")]
-    data["cwes"] = [c for c in data["cwes"] if c.get("id")]
-    data["layers"] = [l for l in data["layers"] if l.get("number")]
-    data["ai_threats"] = [a for a in data["ai_threats"] if a.get("id")]
-    # Compute risk
+
+    cwes = run_read("""
+        MATCH (:CVE {id: $id})-[:CLASSIFIED_AS]->(w:CWE)
+        RETURN DISTINCT w.id AS id, w.name AS name
+    """, id=cve_id)
+    layers = run_read("""
+        MATCH (:CVE {id: $id})-[:MAPS_TO]->(l:OSILayer)
+        RETURN DISTINCT l.number AS number, l.name AS name
+        ORDER BY l.number
+    """, id=cve_id)
+    pocs = run_read("""
+        MATCH (:CVE {id: $id})-[:HAS_POC]->(p:PoC)
+        RETURN DISTINCT p.url AS url, p.source AS source,
+               p.language AS language, p.snippet AS snippet
+    """, id=cve_id)
+    packages = run_read("""
+        MATCH (:CVE {id: $id})-[r:AFFECTS]->(pk:Package)
+        RETURN DISTINCT pk.ecosystem AS ecosystem, pk.name AS name,
+               r.affected_versions AS affected, r.fixed_versions AS fixed
+    """, id=cve_id)
+    ai_threats = run_read("""
+        MATCH (a:AIThreat)-[:RELATED_TO]->(:CVE {id: $id})
+        RETURN DISTINCT a.id AS id, a.name AS name, a.framework AS framework
+    """, id=cve_id)
+
+    data = {
+        "cve": base[0]["cve"],
+        "cwes": [c for c in cwes if c.get("id")],
+        "layers": [l for l in layers if l.get("number")],
+        "pocs": [p for p in pocs if p.get("url")],
+        "packages": [p for p in packages if p.get("name")],
+        "ai_threats": [a for a in ai_threats if a.get("id")],
+    }
     data["risk"] = score_dict({
         "cvss_score": data["cve"].get("cvss_score"),
         "cwe_ids": [c["id"] for c in data["cwes"]],
@@ -371,24 +444,49 @@ def get_risk(cve_id: str) -> dict:
 # --------------------------- Graph subgraph --------------------------------
 @app.get("/api/graph/{cve_id}")
 def graph_for(cve_id: str) -> dict:
-    """Return a Cytoscape-friendly node/edge list for the CVE neighborhood."""
-    rows = run_read("""
-        MATCH (c:CVE {id: $id})
-        OPTIONAL MATCH (c)-[r1:CLASSIFIED_AS]->(w:CWE)
-        OPTIONAL MATCH (c)-[r2:MAPS_TO]->(l:OSILayer)
-        OPTIONAL MATCH (c)-[r3:HAS_POC]->(p:PoC)
-        OPTIONAL MATCH (c)-[r4:AFFECTS]->(pk:Package)
-        OPTIONAL MATCH (a:AIThreat)-[r5:RELATED_TO]->(c)
-        OPTIONAL MATCH (w)-[r6:MAPS_TO]->(l2:OSILayer)
-        RETURN c, w, l, p, pk, a, l2
-    """, id=cve_id.upper())
+    """Return a Cytoscape-friendly node/edge list for the CVE neighborhood.
+
+    Uses one small query per relationship type to avoid the Cartesian
+    explosion of the previous single multi-OPTIONAL-MATCH approach.
+    """
+    cve_id = cve_id.upper()
+    cve_rows = run_read("MATCH (c:CVE {id: $id}) RETURN c{.*} AS n", id=cve_id)
+    if not cve_rows or not cve_rows[0].get("n"):
+        raise HTTPException(404, f"{cve_id} not found")
+
+    cwes = run_read("""
+        MATCH (:CVE {id: $id})-[:CLASSIFIED_AS]->(w:CWE)
+        RETURN DISTINCT w{.*} AS n
+    """, id=cve_id)
+    layers = run_read("""
+        MATCH (:CVE {id: $id})-[:MAPS_TO]->(l:OSILayer)
+        RETURN DISTINCT l{.*} AS n
+    """, id=cve_id)
+    pocs = run_read("""
+        MATCH (:CVE {id: $id})-[:HAS_POC]->(p:PoC)
+        RETURN DISTINCT p{.*} AS n
+    """, id=cve_id)
+    packages = run_read("""
+        MATCH (:CVE {id: $id})-[:AFFECTS]->(pk:Package)
+        RETURN DISTINCT pk{.*} AS n
+    """, id=cve_id)
+    ai_threats = run_read("""
+        MATCH (a:AIThreat)-[:RELATED_TO]->(:CVE {id: $id})
+        RETURN DISTINCT a{.*} AS n
+    """, id=cve_id)
+    cwe_ids = [c["n"].get("id") for c in cwes if c.get("n")]
+    cwe_layers = run_read("""
+        MATCH (w:CWE)-[:MAPS_TO]->(l:OSILayer)
+        WHERE w.id IN $ids
+        RETURN DISTINCT w.id AS w_id, l{.*} AS n
+    """, ids=cwe_ids) if cwe_ids else []
+
     nodes: dict[str, dict] = {}
     edges: list[dict] = []
 
     def add(node, label):
-        if node is None: return None
-        if not isinstance(node, dict): return None
-        # Pick the best identifying field per node type
+        if node is None or not isinstance(node, dict):
+            return None
         ident = (node.get("id") or node.get("purl") or node.get("url")
                  or (str(node["number"]) if node.get("number") is not None else None))
         if not ident:
@@ -397,8 +495,7 @@ def graph_for(cve_id: str) -> dict:
         if key not in nodes:
             # IMPORTANT: spread first, THEN overwrite id/label so the original
             # node.id (e.g. "CVE-2021-44228") doesn't collide with our composite
-            # cytoscape key (e.g. "CVE:CVE-2021-44228"). Without this, edges
-            # reference a node id that doesn't exist and the graph stays empty.
+            # cytoscape key (e.g. "CVE:CVE-2021-44228").
             nodes[key] = {"data": {**node, "id": key, "label": label}}
         return key
 
@@ -407,20 +504,33 @@ def graph_for(cve_id: str) -> dict:
             eid = f"{src}->{tgt}:{kind}"
             edges.append({"data": {"id": eid, "source": src, "target": tgt, "label": kind}})
 
-    for r in rows:
-        cve_k = add(r["c"], "CVE")
-        if r["w"]:  edge(cve_k, add(r["w"], "CWE"), "CLASSIFIED_AS")
-        if r["l"]:  edge(cve_k, add(r["l"], "OSILayer"), "MAPS_TO")
-        if r["p"]:  edge(cve_k, add(r["p"], "PoC"), "HAS_POC")
-        if r["pk"]: edge(cve_k, add(r["pk"], "Package"), "AFFECTS")
-        if r["a"]:  edge(add(r["a"], "AIThreat"), cve_k, "RELATED_TO")
-        if r["w"] and r["l2"]: edge(add(r["w"], "CWE"), add(r["l2"], "OSILayer"), "MAPS_TO")
+    cve_k = add(cve_rows[0]["n"], "CVE")
+    cwe_keys: dict[str, str] = {}
+    for r in cwes:
+        k = add(r["n"], "CWE")
+        if k:
+            cwe_keys[r["n"].get("id")] = k
+            edge(cve_k, k, "CLASSIFIED_AS")
+    for r in layers:
+        edge(cve_k, add(r["n"], "OSILayer"), "MAPS_TO")
+    for r in pocs:
+        edge(cve_k, add(r["n"], "PoC"), "HAS_POC")
+    for r in packages:
+        edge(cve_k, add(r["n"], "Package"), "AFFECTS")
+    for r in ai_threats:
+        edge(add(r["n"], "AIThreat"), cve_k, "RELATED_TO")
+    for r in cwe_layers:
+        src = cwe_keys.get(r.get("w_id"))
+        if src:
+            edge(src, add(r["n"], "OSILayer"), "MAPS_TO")
     return {"nodes": list(nodes.values()), "edges": edges}
 
 
 # --------------------------- Classify a free-form description --------------
 @app.get("/api/classify")
 def classify_text(text: str, cwe: str | None = None) -> dict:
+    if text and len(text) > _CLASSIFY_MAX_CHARS:
+        raise HTTPException(413, f"text too long ({len(text)} > {_CLASSIFY_MAX_CHARS})")
     cwes = [c.strip() for c in (cwe or "").split(",") if c.strip()]
     return {"layers": classify(text, cwes), "input": text, "cwes": cwes}
 
@@ -441,10 +551,27 @@ def attack_chain(cve_id: str, entry: str = "internet", depth: int = 4, branch: i
 # --------------------------- SBOM scan -------------------------------------
 @app.post("/api/sbom")
 async def sbom(file: UploadFile = File(...)) -> dict:
-    content = await file.read()
-    if len(content) > 5 * 1024 * 1024:
-        raise HTTPException(413, "SBOM file too large (5 MB limit)")
+    content = await _read_capped(file, _SBOM_MAX_BYTES, label="SBOM")
     return sbom_scan(content, file.filename or "")
+
+
+async def _read_capped(file: UploadFile, max_bytes: int, label: str = "file") -> bytes:
+    """Stream-read an UploadFile, aborting before buffering more than max_bytes.
+    Prevents multi-GB uploads from OOM-ing the worker."""
+    chunks: list[bytes] = []
+    total = 0
+    chunk_size = 64 * 1024
+    while True:
+        chunk = await file.read(chunk_size)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            # Drain & close to release the connection.
+            await file.close()
+            raise HTTPException(413, f"{label} too large (limit {max_bytes // (1024 * 1024)} MB)")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 # --------------------------- LLM storyteller -------------------------------
@@ -539,7 +666,8 @@ def _fallback_red_team(summary: str, chains: list[dict], agg: float, band: str, 
 # --------------------------- Vulnerability DNA -----------------------------
 @app.get("/api/similar/{cve_id}")
 def similar(cve_id: str, k: int = 10) -> dict:
-    return {"cve": cve_id.upper(), "neighbors": dna.similar(cve_id, k=k)}
+    neighbors, mode = dna.similar_with_mode(cve_id, k=k)
+    return {"cve": cve_id.upper(), "mode": mode, "neighbors": neighbors}
 
 
 @app.post("/api/dna/embed")
@@ -593,7 +721,7 @@ async def policies_upload(files: list[UploadFile] = File(...)) -> dict:
     parsed_per_file: list[dict] = []
     for f in files:
         try:
-            content = await f.read()
+            content = await _read_capped(f, _POLICY_MAX_BYTES, label="policy file")
             policies = parse_policy(content, hint=f.filename or "")
             n = upsert_policies(policies)
             total += n
@@ -703,7 +831,6 @@ def hipaa_sra_endpoint(req: SRARequest):
         data = sra_report.generate_docx(
             stack_summary=req.stack_summary or "", scope=req.scope or "",
             organization=req.organization or "")
-        from fastapi.responses import Response
         return Response(content=data,
                         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                         headers={"Content-Disposition": "attachment; filename=HIPAA_SRA.docx"})
@@ -765,12 +892,11 @@ class ModelCardRequest(BaseModel):
 @app.post("/api/clinical-ai/model-card")
 def clinical_model_card(req: ModelCardRequest):
     if req.format == "docx":
-        data = model_card.generate_docx(**req.dict(exclude={"format"}))
-        from fastapi.responses import Response
+        data = model_card.generate_docx(**req.model_dump(exclude={"format"}))
         return Response(content=data,
                         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                         headers={"Content-Disposition": "attachment; filename=model_card.docx"})
-    md = model_card.generate_markdown(**req.dict(exclude={"format"}))
+    md = model_card.generate_markdown(**req.model_dump(exclude={"format"}))
     return {"format": "markdown", "report": md}
 
 

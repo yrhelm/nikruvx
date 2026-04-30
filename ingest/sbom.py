@@ -16,7 +16,7 @@ Supported formats (auto-detected by content/filename):
     - Maven pom.xml (light parsing)
     - Go go.mod
     - Ruby Gemfile.lock
-    - Rust Cargo.lock / Cargo.toml
+    - Rust Cargo.lock
     - CycloneDX JSON (any ecosystem)
     - SPDX JSON (any ecosystem)
 
@@ -60,7 +60,7 @@ def _detect(filename: str, content: str) -> str:
         return "go"
     if name.endswith("gemfile.lock"):
         return "rubygems"
-    if name.endswith(("cargo.lock", "cargo.toml")):
+    if name.endswith("cargo.lock"):
         return "cargo"
     # Heuristic JSON detection
     if content.strip().startswith("{"):

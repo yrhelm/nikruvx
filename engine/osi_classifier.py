@@ -160,6 +160,7 @@ class LayerHit:
     name: str
     confidence: float
     reasons: list[str]
+    is_fallback: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -167,6 +168,7 @@ class LayerHit:
             "name": self.name,
             "confidence": round(self.confidence, 3),
             "reasons": self.reasons,
+            "is_fallback": self.is_fallback,
         }
 
 
@@ -182,9 +184,11 @@ def _score_text(text: str) -> dict[int, tuple[float, list[str]]]:
             matches = re.findall(pattern, text, flags=re.IGNORECASE)
             if matches:
                 total += weight * (1 + 0.15 * (len(matches) - 1))
-                # Show the first match as a reason
                 first = matches[0] if isinstance(matches[0], str) else matches[0][0]
-                reasons.append(f"matched '{first}'")
+                if len(matches) > 1:
+                    reasons.append(f"matched '{first}' ×{len(matches)}")
+                else:
+                    reasons.append(f"matched '{first}'")
         if total > 0:
             scores[layer] = (total, reasons)
     return scores
@@ -223,7 +227,9 @@ def classify(
 
     if not scores:
         # Fallback: most CVEs are app-layer when nothing else matches.
-        return [LayerHit(7, LAYER_NAMES[7], 0.4, ["fallback: no specific signal"]).to_dict()]
+        # Tagged so consumers (UI, scoring) can dim/down-weight the result.
+        return [LayerHit(7, LAYER_NAMES[7], 0.4,
+                         ["fallback: no specific signal"], is_fallback=True).to_dict()]
 
     max_score = max(s for s, _ in scores.values())
     hits: list[LayerHit] = []

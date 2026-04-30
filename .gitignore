@@ -119,3 +119,6 @@ service-account*.json
 
 # ---- Optional: keep an empty data dir scaffold but exclude contents ----
 !data/neo4j/.gitkeep
+
+# --- Internal Code Review Notes (uncomment if needed) ---
+CODE_REVIEW.md
