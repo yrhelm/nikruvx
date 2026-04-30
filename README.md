@@ -280,3 +280,5 @@ Or click **Live KEV** in the top nav.
 
 For your internal research/security use. CVE/CWE/ATLAS/OWASP data belongs to
 their respective owners.
+<img width="1654" height="953" alt="image" src="https://github.com/user-attachments/assets/06612669-02a7-48fb-be9f-43d6ee7d77ae" />
+
