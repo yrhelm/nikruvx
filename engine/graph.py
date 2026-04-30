@@ -54,16 +54,23 @@ def close_driver() -> None:
 @contextmanager
 def session() -> Iterable[Session]:
     driver = get_driver()
-    s = driver.session()
+    # Pin the default database explicitly. Without this Neo4j 5 uses whatever
+    # the server's `dbms.default_database` is set to, which is server-config
+    # rather than client-controlled — a moving target across deployments.
+    s = driver.session(database=settings.neo4j_database)
     try:
         yield s
     finally:
         s.close()
 
 
-def run_write(cypher: str, **params: Any):
+def run_write(cypher: str, **params: Any) -> list[dict]:
+    """Execute a write tx and return JSON-safe row dicts (symmetric with run_read)."""
     with session() as s:
-        return s.execute_write(lambda tx: list(tx.run(cypher, **params)))
+        rows = s.execute_write(
+            lambda tx: [r.data() for r in tx.run(cypher, **params)]
+        )
+    return [_json_safe(r) for r in rows]
 
 
 def run_read(cypher: str, **params: Any) -> list[dict]:

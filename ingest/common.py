@@ -14,11 +14,20 @@ console = Console()
 USER_AGENT = "CyberNexus/1.0 (+local)"
 
 
-def http_client(timeout: float = 30.0, headers: dict | None = None) -> httpx.Client:
+def http_client(timeout: float = 30.0, headers: dict | None = None,
+                 follow_redirects: bool = True) -> httpx.Client:
+    """Build a shared HTTP client.
+
+    NOTE: redirect-following is enabled by default for backwards compatibility
+    with ingesters that fetch from hosts known to redirect (gitlab raw URLs,
+    MITRE CWE zip, etc.). For fetchers that resolve attacker-influenced URLs
+    (e.g. PoC reference links from third-party advisories), pass
+    `follow_redirects=False` and validate the final hostname yourself.
+    """
     h = {"User-Agent": USER_AGENT, "Accept": "application/json"}
     if headers:
         h.update(headers)
-    return httpx.Client(timeout=timeout, headers=h, follow_redirects=True)
+    return httpx.Client(timeout=timeout, headers=h, follow_redirects=follow_redirects)
 
 
 def _severity_from_cvss(score: float | None) -> str:

@@ -65,14 +65,28 @@ def embed_corpus(limit: int = 5000, refresh: bool = False) -> int:
         console.print(f"  Start it (`ollama serve`) and pull a model: `ollama pull {llm.EMBED_MODEL}`")
         return 0
     ensure_index()
-    where = "c.embedding IS NULL" if not refresh else "true"
-    rows = run_read(f"""
-        MATCH (c:CVE)
-        WHERE {where} AND c.description IS NOT NULL AND c.description <> ""
-        RETURN c.id AS id, c.description AS description
-        ORDER BY coalesce(c.cvss_score, 0) DESC
-        LIMIT $limit
-    """, limit=limit)
+    # Two pre-built queries instead of f-string interpolation. The branch is
+    # tiny but parameter-only Cypher is the right hygiene to model — if any
+    # of these "WHERE" fragments ever became user-influenced the f-string
+    # pattern would be a Cypher-injection footgun.
+    if refresh:
+        cypher = """
+            MATCH (c:CVE)
+            WHERE c.description IS NOT NULL AND c.description <> ""
+            RETURN c.id AS id, c.description AS description
+            ORDER BY coalesce(c.cvss_score, 0) DESC
+            LIMIT $limit
+        """
+    else:
+        cypher = """
+            MATCH (c:CVE)
+            WHERE c.embedding IS NULL
+              AND c.description IS NOT NULL AND c.description <> ""
+            RETURN c.id AS id, c.description AS description
+            ORDER BY coalesce(c.cvss_score, 0) DESC
+            LIMIT $limit
+        """
+    rows = run_read(cypher, limit=limit)
     if not rows:
         console.print("[yellow]Nothing to embed.")
         return 0
@@ -99,7 +113,18 @@ def embed_corpus(limit: int = 5000, refresh: bool = False) -> int:
 # Search
 # ---------------------------------------------------------------------------
 def similar(cve_id: str, k: int = 10) -> list[dict]:
-    """Return the K most semantically similar CVEs."""
+    """Return the K most semantically similar CVEs.
+
+    Backwards-compat wrapper. Prefer `similar_with_mode` to also learn
+    whether the result came from the embedding index or the lexical fallback.
+    """
+    neighbors, _mode = similar_with_mode(cve_id, k=k)
+    return neighbors
+
+
+def similar_with_mode(cve_id: str, k: int = 10) -> tuple[list[dict], str]:
+    """Like `similar`, but also returns ``"embedding"`` or ``"lexical"`` so the
+    caller (e.g. the API layer) can tell users which path produced the result."""
     cve_id = cve_id.upper()
     rows = run_read("""
         MATCH (src:CVE {id: $id})
@@ -116,9 +141,9 @@ def similar(cve_id: str, k: int = 10) -> list[dict]:
         ORDER BY score DESC LIMIT $k
     """, id=cve_id, idx=INDEX_NAME, k1=k + 5, k=k)
     if rows:
-        return rows
+        return rows, "embedding"
     # Fallback: lexical similarity over keywords
-    return _lexical_similar(cve_id, k)
+    return _lexical_similar(cve_id, k), "lexical"
 
 
 _TOK = re.compile(r"[a-zA-Z][a-zA-Z0-9_]{2,}")
