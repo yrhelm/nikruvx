@@ -528,7 +528,6 @@ def graph_for(cve_id: str) -> dict:
 
 # --------------------------- Classify a free-form description --------------
 @app.get("/api/classify")
-@app.get("/api/classify")
 def classify_text(text: str, cwe: str | None = None) -> dict:
     if text and len(text) > _CLASSIFY_MAX_CHARS:
         raise HTTPException(413, f"text too long ({len(text)} > {_CLASSIFY_MAX_CHARS})")
