@@ -41,8 +41,6 @@ publishing a fix, and coordinating disclosure with you.
 
 If you prefer email, contact: **yrhelm@outlook.com**
 
-> Replace this placeholder with a real address you control before
-> publishing the file. A common pattern is `security+nikruvx@<your-domain>`.
 
 For sensitive details, please encrypt with our PGP key (fingerprint to be
 published once issued).
