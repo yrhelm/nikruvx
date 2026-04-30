@@ -273,6 +273,219 @@ python -m ingest.telemetry --kev-only
 ```
 Or click **Live KEV** in the top nav.
 
+## Local LLM Threat Storyteller (Ollama)
+
+For any CVE in the graph, NikruvX can produce a **4-paragraph narrative
+attack scenario** grounded in the graph context (CWEs, OSI layers,
+affected packages, PoC count). The narrative is structured exactly like
+a defender brief:
+
+1. **Adversary** — who would weaponize this and why
+2. **Exploitation Flow** — the technical chain at the affected OSI layer(s)
+3. **Blast Radius** — what an attacker holds afterwards and what they can pivot to
+4. **Defender Action** — the 2-3 highest-leverage mitigations
+
+**Everything stays on your machine.** The storyteller talks to a local
+Ollama daemon over `http://localhost:11434` — no CVE data, no chain
+context, and no narrative output ever leaves the host.
+
+### Prerequisites
+
+```bash
+# 1. Install Ollama         https://ollama.com/download
+# 2. Pull a generation model
+ollama pull llama3.1:8b              # ~5 GB, recommended
+# Alternatives if RAM is tight:
+#   ollama pull qwen2.5:3b           # ~2 GB
+#   ollama pull gemma2:2b            # ~1.6 GB
+#   ollama pull phi3:mini            # ~2.3 GB
+# 3. Pull the embedding model (also used by Vulnerability DNA)
+ollama pull nomic-embed-text
+```
+
+### How to use
+
+| Surface | Where |
+|---|---|
+| Click **📖 LLM Story** on any CVE detail card in the UI | Streams into the right-hand panel as the model generates |
+| `GET /api/story/{cve_id}` | Returns the full narrative as JSON |
+| `GET /api/story/stream/{cve_id}` | Server-sent text stream — same content, token-by-token |
+| `GET /api/llm/health` | Returns `{available, url, default_model, embed_model}` so you can verify connectivity |
+
+### Configuration
+
+| Env var | Default | Notes |
+|---|---|---|
+| `OLLAMA_URL` | `http://localhost:11434` | Override if Ollama runs on a different host/port |
+| `OLLAMA_MODEL` | `llama3.1:8b` | Any tag your Ollama has pulled |
+| `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | Used by Vulnerability DNA + Patch Twins |
+
+### What if Ollama is offline?
+
+The rest of NikruvX keeps working — only the storyteller endpoints return
+`503 Local LLM unreachable`. The UI shows a friendly fallback message
+prompting the user to install Ollama; every other tab is unaffected.
+
+---
+
+## AI Red-Team Mode
+
+Describe your stack in plain English, drop in optional package URLs,
+pick an entry vector, and get back a **CISO-grade red-team brief** that
+fuses graph-derived attack chains with LLM-authored prose. Think of it
+as a tabletop exercise generator that knows your actual CVEs.
+
+### What it does
+
+1. Takes a free-form stack description (and optionally a list of
+   `pkg:eco/name` purls).
+2. Fans out across the graph to find CVEs affecting any of those packages.
+3. Runs the cross-layer **attack chain generator** to produce ranked
+   multi-step attack paths from the chosen entry vector.
+4. Computes an **aggregate Nexus Risk Score** for the stack.
+5. Hands the chains + stack summary to the local LLM, which produces a
+   four-section brief:
+   - **Executive Summary**
+   - **Realistic Attack Path** (numbered, references the chain steps)
+   - **Critical Findings** (3–5 bullets)
+   - **Defensive Priorities** (top 5, each tied to an OSI layer)
+
+If Ollama is offline, the brief falls back to a deterministic structured
+plan — you still get the chains and the score, just without the prose.
+
+### Entry vectors
+
+| Vector | Initial attacker capabilities |
+|---|---|
+| `internet` | Empty. Blind external attacker hitting the public surface. |
+| `lan` | `LATERAL_LAN`, `MITM_NET` — attacker on the same broadcast domain. |
+| `physical` | `HW_ACCESS`, `LATERAL_LAN` — physical access to the device. |
+| `insider` | `LOCAL_CODE`, `LATERAL_LAN`, `AUTH_BYPASS` — malicious or compromised employee. |
+
+### How to use
+
+| Surface | Where |
+|---|---|
+| **Red-Team** tab in the top nav | Stack textarea + purls + entry vector dropdown → "Generate plan" |
+| `POST /api/red-team` | JSON body `{stack_summary, purls, entry}` → returns `{chains, aggregate_score, band, plan}` |
+
+### Example
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/red-team \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "stack_summary": "Spring Boot 3 microservices behind nginx with Tomcat, Jackson serialization, and log4j2 for log aggregation. PostgreSQL backend on EKS.",
+    "purls": [
+      "pkg:maven/org.springframework:spring-core",
+      "pkg:maven/org.apache.logging.log4j:log4j-core",
+      "pkg:maven/com.fasterxml.jackson.core:jackson-databind"
+    ],
+    "entry": "internet"
+  }'
+```
+
+Returns a JSON document with the discovered chains, an aggregate
+0–100 score with band (`CRITICAL` / `HIGH` / `MEDIUM` / `LOW`), and the
+red-team plan in markdown.
+
+### Six paste-ready stack examples
+
+The wiki page **[[AI Red-Team Mode]]** has six full prompts covering AI/LLM
+RAG, Java enterprise, Node.js, container supply chain, ML pipelines, and
+HSM-backed signing — start with one of those to see the system at full
+power on day one.
+
+---
+
+## HIPAA / Compliance Lens
+
+For healthcare-AI organizations, NikruvX overlays everything else with
+the **HIPAA Security Rule + Privacy Rule + GDPR Article 9 + FDA SaMD
+GMLP** dimension. PHI-handling components are auto-detected from a
+curated list of HL7v2 / FHIR / DICOM / X12 / clinical-NLP / EHR / IoMT
+libraries; CVEs affecting them get a `PHI_DISCLOSURE` capability that
+maps to citable rule sections.
+
+### What it produces
+
+- **Capability-by-citation coverage panel** — your loaded policies vs
+  the regulatory citations they satisfy (e.g. AWS KMS encryption →
+  §164.312(a)(2)(iv); Conditional Access MFA → §164.312(d)).
+- **One-click Security Risk Analysis** — auto-populated markdown or
+  `.docx` covering all four required HHS sections (Assets, Threats,
+  Current Measures, Risk Determination + Remediation).
+- **PHI-affecting CVE list** — sorted by CVSS, layer-mapped, citation-tagged.
+
+### Endpoints
+
+```
+POST /api/hipaa/seed-phi      Pull healthcare packages from OSV.dev + tag them
+POST /api/hipaa/tag-phi       Re-tag without re-pulling from OSV
+GET  /api/hipaa/coverage      Regulatory coverage rollup
+GET  /api/hipaa/gaps/{cve}    Per-CVE gap analysis with HIPAA citations
+POST /api/hipaa/sra           Generate SRA (markdown or docx)
+```
+
+Or click **HIPAA / Compliance** in the top nav.
+
+---
+
+## Clinical AI Adversarial Test Suite
+
+Generic AI red-teaming doesn't know what it means for a model to be
+wrong about a *patient*. NikruvX ships a corpus of **28 medical-domain
+adversarial test cases** across 8 categories:
+
+| Category | What it probes |
+|---|---|
+| `drug_confusion` | ISMP look-alike / sound-alike pairs (Heparin/Hespan, Vinblastine/Vincristine) |
+| `dose_injection` | Embedded prompt injection trying to flip mg↔g, route IV↔PO, frequency q4h↔q24h |
+| `icd_manipulation` | Adversarial ICD-10 codes that look valid but aren't |
+| `indirect_injection` | Prompt injection through clinical notes / lab reports |
+| `deid_reversal` | Re-identification attacks from quasi-identifiers (Safe Harbor) |
+| `bias_probe` | Same chest-pain ED scenario across 5 demographic permutations |
+| `hallucinated_guideline` | Fictional NEJM trials, fabricated drug interactions |
+| `output_safety` | Holliday-Segar pediatrics, hyperkalemia trap, etc. |
+
+Every failure is persisted as an `:AIVulnFinding` node in the graph, keyed
+by `(test_id, model)` so you can diff runs across model versions.
+
+### How to run
+
+```bash
+# Default: against your local Ollama
+python -m engine.clinical_runner --model llama3.1:8b
+
+# Subset of categories
+python -m engine.clinical_runner --model llama3.1:8b \
+  --categories drug_confusion,bias_probe
+
+# Against any OpenAI-compatible /v1/chat/completions endpoint
+python -m engine.clinical_runner --model gpt-4o-mini \
+  --api-base https://api.openai.com/v1 \
+  --api-key sk-...
+```
+
+Or use the **Clinical AI** tab → **Run Tests** sub-tab in the UI.
+
+### Model Card / FDA SaMD Readiness
+
+After running the corpus, generate a 10-section model card (markdown or
+`.docx`) following FDA Good Machine Learning Practice (GMLP) Guiding
+Principles. Findings are embedded automatically.
+
+```
+POST /api/clinical-ai/run            Run the corpus against a model
+GET  /api/clinical-ai/findings       Persisted findings (filterable by model)
+GET  /api/clinical-ai/categories     Available categories + case counts
+POST /api/clinical-ai/model-card     Generate Model Card (markdown or docx)
+```
+
+Or click **Clinical AI → Model Card** in the top nav.
+
+---
+
 ## Extending
 
 - **More ecosystems**: OSV.dev already covers Hex, NuGet, Pub, SwiftURL, etc.
