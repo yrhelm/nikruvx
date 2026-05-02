@@ -72,7 +72,36 @@ designed to install entirely from prebuilt wheels.
 
 ## Quick start
 
-### One-command setup (recommended)
+### Truly one-shot install (recommended)
+
+```powershell
+# Windows
+.\install.ps1
+```
+
+```bash
+# Linux / macOS
+./install.sh
+```
+
+That single command does **everything**: checks prerequisites (Python / Docker /
+Ollama), creates `.venv`, installs deps, starts Neo4j, waits for it to be
+ready, applies the schema, runs the full data bootstrap (NVD / CWE / OSV /
+GHSA / ATLAS / OWASP / PoCs), pulls Ollama models, and starts the API on
+http://127.0.0.1:8000/. Total time on first run: ~5 minutes.
+
+It's safe to re-run — every step is idempotent.
+
+| Flag | Behaviour |
+|---|---|
+| `.\install.ps1 -SkipBootstrap` | Install only, no data ingest |
+| `.\install.ps1 -SkipOllama` | Don't pull Ollama models |
+| `.\install.ps1 -NoApi` | Don't auto-start the API at the end |
+| Linux equivalents: `SKIP_BOOTSTRAP=1 ./install.sh`, `SKIP_OLLAMA=1`, `NO_API=1` | |
+
+### Make / PowerShell tasks
+
+If you'd rather drive the steps yourself:
 
 | Linux / macOS | Windows |
 |---|---|
