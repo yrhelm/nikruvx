@@ -1,0 +1,64 @@
+[project]
+name = "nikruvx"
+version = "1.0.0"
+description = "Graph-native cybersecurity intelligence: CVE x CWE x Packages x AI threats x Policies, mapped across all 7 OSI layers."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "NikruvX contributors" }]
+keywords = [
+  "cybersecurity", "vulnerability-management", "neo4j", "graph-database",
+  "cve", "cwe", "osi-model", "attack-chain", "sbom", "hipaa-compliance",
+  "ai-security", "llm-security", "mitre-atlas", "owasp-llm-top10",
+  "fastapi", "ollama", "threat-modeling", "clinical-ai",
+]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+markers = [
+  "integration: requires a live Neo4j and/or Ollama (skipped in CI)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["data", ".venv", "venv", "outputs"]
+
+[tool.ruff.lint]
+select = [
+  "E",   # pycodestyle errors
+  "F",   # pyflakes
+  "W",   # pycodestyle warnings
+  "I",   # isort
+  "B",   # flake8-bugbear
+  "UP",  # pyupgrade
+  "RUF", # ruff-native rules
+]
+ignore = [
+  "E501",  # long lines: many docstrings hold prompts that legitimately wrap
+  "B008",  # function call in default arg (FastAPI Depends() pattern)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011", "F401"]
+"engine/clinical_ai_corpus.py" = ["E501"]
+"engine/policy_capabilities.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["engine"]
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_no_return = true
+no_implicit_optional = true
+check_untyped_defs = true
+# Relaxed flags for now -- tighten incrementally:
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+
+[[tool.mypy.overrides]]
+module = ["docx.*", "yaml.*", "neo4j.*", "rich.*"]
+ignore_missing_imports = true

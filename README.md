@@ -1,6 +1,7 @@
 # NikruvX · Cyber Nexus
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![CI](https://github.com/yrhelm/nikruvx/actions/workflows/ci.yml/badge.svg)](https://github.com/yrhelm/nikruvx/actions/workflows/ci.yml)
 [![Stack](https://img.shields.io/badge/stack-Neo4j%20·%20FastAPI%20·%20Ollama-00e5ff)]()
 [![Local-first](https://img.shields.io/badge/data-stays%20local-2ee59d)]()
 [![Security policy](https://img.shields.io/badge/security-report%20a%20vulnerability-red.svg)](https://github.com/yrhelm/nikruvx/security/advisories/new)
@@ -71,27 +72,73 @@ designed to install entirely from prebuilt wheels.
 
 ## Quick start
 
+### One-command setup (recommended)
+
+| Linux / macOS | Windows |
+|---|---|
+| `make bootstrap && make run` | `.\tasks.ps1 bootstrap; .\tasks.ps1 run` |
+
+That single chain:
+
+1. Creates `.venv`, installs runtime + dev dependencies.
+2. Spins up Neo4j (and optionally Ollama) via `docker compose`.
+3. Waits for Neo4j to be healthy.
+4. Runs `scripts/bootstrap.py` (schema + CVE/CWE/OSV/GHSA/ATLAS/OWASP/PoC ingest).
+5. Starts the API at http://127.0.0.1:8000/.
+
+Run `make help` (or `.\tasks.ps1 help`) for the full list of targets:
+`bootstrap`, `run`, `test`, `lint`, `format`, `mypy`, `openapi`, `demo`,
+`ollama`, `docker-up`, `docker-down`, `clean`.
+
+### Manual setup (if you prefer)
+
 ```bash
-# 1. Start the local Neo4j graph DB
-docker compose up -d
+# 1. Start the local Neo4j graph DB (and optional services)
+docker compose up -d                               # default: just Neo4j
+docker compose --profile ollama up -d              # also start Ollama (CPU)
+docker compose --profile gpu up -d                 # also start Ollama (NVIDIA GPU)
 
 # 2. Python deps
-python -m venv .venv && source .venv/bin/activate    # (or .venv\Scripts\activate on Windows)
-pip install -r requirements.txt
+python -m venv .venv && source .venv/bin/activate  # (or .venv\Scripts\activate on Windows)
+pip install -r requirements.txt -r requirements-dev.txt
 
 # 3. Configure
-cp .env.example .env                                 # edit if you want tokens
+cp .env.example .env                               # edit if you want NVD / GitHub tokens
 
 # 4. Bootstrap the graph (schema + CVE/CWE/OSV/GHSA/ATLAS/OWASP/PoC)
 python scripts/bootstrap.py
 
-# 5. Verify
+# 5. Verify + run
 python scripts/verify.py
-
-# 6. Run the API + UI
 python -m api.server
 # open http://127.0.0.1:8000/
 ```
+
+### API documentation
+
+Once the server is running, FastAPI exposes interactive docs out of the box:
+
+| URL | What it is |
+|---|---|
+| http://127.0.0.1:8000/docs  | **Swagger UI** - try every endpoint live |
+| http://127.0.0.1:8000/redoc | **ReDoc** rendering of the same spec |
+| http://127.0.0.1:8000/openapi.json | Raw OpenAPI 3.x JSON |
+
+A static snapshot of the spec is also pinned at [`docs/openapi.json`](docs/openapi.json)
+and regenerated on every CI run. To refresh it locally: `make openapi`
+(or `.\tasks.ps1 openapi`).
+
+### Running the tests
+
+```bash
+make test            # Linux / macOS
+.\tasks.ps1 test     # Windows
+# Or directly:
+pytest -q
+```
+
+The suite mocks Neo4j and Ollama, so it runs fully offline in CI without
+any external services.
 
 ## Project layout
 
