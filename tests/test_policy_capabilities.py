@@ -1,8 +1,13 @@
 """Tests for engine.policy_capabilities."""
+
 from __future__ import annotations
 
 from engine.policy_capabilities import (
-    ALL_CAPS, CONTROL_CLASSES, by_name, for_capability, all_caps_with_classes,
+    ALL_CAPS,
+    CONTROL_CLASSES,
+    all_caps_with_classes,
+    by_name,
+    for_capability,
 )
 
 
@@ -15,7 +20,7 @@ def test_every_control_class_targets_a_known_capability():
 def test_every_capability_has_at_least_one_mitigation_or_is_known_gap():
     """If a capability has zero mitigations, that's tracked as a known gap."""
     coverage = all_caps_with_classes()
-    known_gaps = {"WRITE_FS"}    # currently no control class explicitly covers WRITE_FS
+    known_gaps = {"WRITE_FS"}  # currently no control class explicitly covers WRITE_FS
     for cap in ALL_CAPS:
         if cap in known_gaps:
             continue

@@ -1,6 +1,9 @@
 """Persist normalized Policy + Control objects into the Neo4j graph."""
+
 from __future__ import annotations
+
 import json
+
 from engine.graph import session
 from engine.policy_model import Policy
 
@@ -10,19 +13,29 @@ def upsert_policies(policies: list[Policy]) -> int:
         return 0
     payload = []
     for p in policies:
-        payload.append({
-            "id": p.id, "source": p.source, "type": p.type, "name": p.name,
-            "scope_json": json.dumps(p.scope or {}),
-            "controls": [
-                {"id": c.id, "title": c.title, "effect": c.effect,
-                 "action": c.action, "layer": c.layer,
-                 "capability_classes": list(c.capability_classes or []),
-                 "capabilities_mitigated": list(c.capabilities_mitigated or []),
-                 "scope_json": json.dumps(c.scope or {}),
-                 "lineno": c.source_lineno}
-                for c in p.controls
-            ],
-        })
+        payload.append(
+            {
+                "id": p.id,
+                "source": p.source,
+                "type": p.type,
+                "name": p.name,
+                "scope_json": json.dumps(p.scope or {}),
+                "controls": [
+                    {
+                        "id": c.id,
+                        "title": c.title,
+                        "effect": c.effect,
+                        "action": c.action,
+                        "layer": c.layer,
+                        "capability_classes": list(c.capability_classes or []),
+                        "capabilities_mitigated": list(c.capabilities_mitigated or []),
+                        "scope_json": json.dumps(c.scope or {}),
+                        "lineno": c.source_lineno,
+                    }
+                    for c in p.controls
+                ],
+            }
+        )
 
     cypher = """
     UNWIND $policies AS pol
@@ -52,4 +65,3 @@ def upsert_policies(policies: list[Policy]) -> int:
     with session() as s:
         s.run(cypher, policies=payload)
     return len(payload)
-

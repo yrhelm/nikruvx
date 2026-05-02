@@ -1,12 +1,14 @@
 """Tests for ingest.policies parsers + auto-detection."""
+
 from __future__ import annotations
+
 import json
 
 from ingest.policies import parse_any
 from ingest.policies.aws import parse_iam_doc, parse_security_groups, parse_waf
 from ingest.policies.azure import parse_conditional_access, parse_intune_compliance
 from ingest.policies.gcp import parse_iam, parse_vpc_firewall
-from ingest.policies.generic import parse_iptables, parse_modsecurity, parse_cloudflare
+from ingest.policies.generic import parse_cloudflare, parse_iptables, parse_modsecurity
 
 
 # ---------------------------------------------------------------------------
@@ -15,10 +17,14 @@ from ingest.policies.generic import parse_iptables, parse_modsecurity, parse_clo
 def test_aws_iam_mfa_deny_tags_mfa_required():
     iam = {
         "Version": "2012-10-17",
-        "Statement": [{
-            "Effect": "Deny", "Action": "*", "Resource": "*",
-            "Condition": {"BoolIfExists": {"aws:MultiFactorAuthPresent": "false"}},
-        }],
+        "Statement": [
+            {
+                "Effect": "Deny",
+                "Action": "*",
+                "Resource": "*",
+                "Condition": {"BoolIfExists": {"aws:MultiFactorAuthPresent": "false"}},
+            }
+        ],
     }
     pols = parse_iam_doc(iam, "mfa-policy")
     assert len(pols) == 1
@@ -52,27 +58,48 @@ def test_aws_iam_kms_action_tags_kms_resource_policy():
 # AWS Security Groups
 # ---------------------------------------------------------------------------
 def test_aws_sg_restrictive_egress_tags_default_deny():
-    sg = {"SecurityGroups": [{
-        "GroupId": "sg-prod", "GroupName": "prod", "VpcId": "vpc-1",
-        "IpPermissions": [],
-        "IpPermissionsEgress": [{
-            "IpProtocol": "-1", "FromPort": -1, "ToPort": -1,
-            "IpRanges": [{"CidrIp": "10.0.0.0/8"}],
-        }],
-    }]}
+    sg = {
+        "SecurityGroups": [
+            {
+                "GroupId": "sg-prod",
+                "GroupName": "prod",
+                "VpcId": "vpc-1",
+                "IpPermissions": [],
+                "IpPermissionsEgress": [
+                    {
+                        "IpProtocol": "-1",
+                        "FromPort": -1,
+                        "ToPort": -1,
+                        "IpRanges": [{"CidrIp": "10.0.0.0/8"}],
+                    }
+                ],
+            }
+        ]
+    }
     pols = parse_security_groups(sg)
     egress = [c for c in pols[0].controls if c.action == "egress"]
     assert egress and "egress-default-deny" in egress[0].capability_classes
 
 
 def test_aws_sg_open_egress_does_NOT_tag_default_deny():
-    sg = {"SecurityGroups": [{
-        "GroupId": "sg-1", "GroupName": "open", "VpcId": "vpc-1",
-        "IpPermissions": [], "IpPermissionsEgress": [{
-            "IpProtocol": "-1", "FromPort": -1, "ToPort": -1,
-            "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
-        }],
-    }]}
+    sg = {
+        "SecurityGroups": [
+            {
+                "GroupId": "sg-1",
+                "GroupName": "open",
+                "VpcId": "vpc-1",
+                "IpPermissions": [],
+                "IpPermissionsEgress": [
+                    {
+                        "IpProtocol": "-1",
+                        "FromPort": -1,
+                        "ToPort": -1,
+                        "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
+                    }
+                ],
+            }
+        ]
+    }
     pols = parse_security_groups(sg)
     egress = [c for c in pols[0].controls if c.action == "egress"]
     if egress:
@@ -83,12 +110,23 @@ def test_aws_sg_open_egress_does_NOT_tag_default_deny():
 # AWS WAF
 # ---------------------------------------------------------------------------
 def test_aws_waf_known_bad_inputs_tags_rce_rule():
-    acl = {"WebACL": {"Name": "edge-acl", "Rules": [{
-        "Name": "AWS-AWSManagedRulesKnownBadInputsRuleSet",
-        "Priority": 1,
-        "Action": {"Block": {}},
-        "Statement": {"ManagedRuleGroupStatement": {"Name": "AWSManagedRulesKnownBadInputsRuleSet"}},
-    }]}}
+    acl = {
+        "WebACL": {
+            "Name": "edge-acl",
+            "Rules": [
+                {
+                    "Name": "AWS-AWSManagedRulesKnownBadInputsRuleSet",
+                    "Priority": 1,
+                    "Action": {"Block": {}},
+                    "Statement": {
+                        "ManagedRuleGroupStatement": {
+                            "Name": "AWSManagedRulesKnownBadInputsRuleSet"
+                        }
+                    },
+                }
+            ],
+        }
+    }
     pols = parse_waf(acl)
     classes = pols[0].controls[0].capability_classes
     assert "waf-rce-rule" in classes
@@ -98,13 +136,17 @@ def test_aws_waf_known_bad_inputs_tags_rce_rule():
 # Azure Conditional Access
 # ---------------------------------------------------------------------------
 def test_azure_ca_mfa_and_compliant_device():
-    ca = [{
-        "displayName": "Require MFA + compliant device",
-        "state": "enabled",
-        "conditions": {"users": {"includeRoles": ["Global Admin"]},
-                       "applications": {"includeApplications": ["All"]}},
-        "grantControls": {"operator": "AND", "builtInControls": ["mfa", "compliantDevice"]},
-    }]
+    ca = [
+        {
+            "displayName": "Require MFA + compliant device",
+            "state": "enabled",
+            "conditions": {
+                "users": {"includeRoles": ["Global Admin"]},
+                "applications": {"includeApplications": ["All"]},
+            },
+            "grantControls": {"operator": "AND", "builtInControls": ["mfa", "compliantDevice"]},
+        }
+    ]
     pols = parse_conditional_access(ca)
     [c] = pols[0].controls
     assert "mfa-required" in c.capability_classes
@@ -112,8 +154,14 @@ def test_azure_ca_mfa_and_compliant_device():
 
 
 def test_azure_ca_disabled_policy_emits_no_controls():
-    ca = [{"displayName": "Old policy", "state": "disabled",
-           "conditions": {}, "grantControls": {"builtInControls": ["mfa"]}}]
+    ca = [
+        {
+            "displayName": "Old policy",
+            "state": "disabled",
+            "conditions": {},
+            "grantControls": {"builtInControls": ["mfa"]},
+        }
+    ]
     pols = parse_conditional_access(ca)
     assert pols and not pols[0].controls
 
@@ -131,20 +179,25 @@ def test_intune_compliance_disk_encryption():
 # GCP
 # ---------------------------------------------------------------------------
 def test_gcp_iam_emits_one_control_per_binding():
-    doc = {"bindings": [
-        {"role": "roles/owner", "members": ["user:admin@example.com"]},
-        {"role": "roles/storage.objectViewer", "members": ["allUsers"]},
-    ]}
+    doc = {
+        "bindings": [
+            {"role": "roles/owner", "members": ["user:admin@example.com"]},
+            {"role": "roles/storage.objectViewer", "members": ["allUsers"]},
+        ]
+    }
     pols = parse_iam(doc, "my-project")
     assert len(pols[0].controls) == 2
 
 
 def test_gcp_vpc_egress_deny_tags_metadata_block():
-    rules = [{
-        "name": "deny-metadata", "direction": "EGRESS",
-        "denied": [{"IPProtocol": "all"}],
-        "destinationRanges": ["169.254.169.254/32"],
-    }]
+    rules = [
+        {
+            "name": "deny-metadata",
+            "direction": "EGRESS",
+            "denied": [{"IPProtocol": "all"}],
+            "destinationRanges": ["169.254.169.254/32"],
+        }
+    ]
     pols = parse_vpc_firewall(rules)
     assert "egress-deny-metadata" in pols[0].controls[0].capability_classes
 
@@ -170,10 +223,13 @@ def test_modsec_sqli_rule_tags_injection_class():
 
 
 def test_cloudflare_xss_block_rule():
-    items = [{
-        "filter": {"expression": "(http.request.uri.query contains \"<script\")"},
-        "action": "block", "description": "block-xss",
-    }]
+    items = [
+        {
+            "filter": {"expression": '(http.request.uri.query contains "<script")'},
+            "action": "block",
+            "description": "block-xss",
+        }
+    ]
     pols = parse_cloudflare(items)
     assert pols[0].controls[0].effect == "BLOCK"
 
@@ -182,7 +238,10 @@ def test_cloudflare_xss_block_rule():
 # parse_any auto-detection
 # ---------------------------------------------------------------------------
 def test_parse_any_detects_iam_json():
-    iam = {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": "*", "Resource": "*"}]}
+    iam = {
+        "Version": "2012-10-17",
+        "Statement": [{"Effect": "Allow", "Action": "*", "Resource": "*"}],
+    }
     pols = parse_any(json.dumps(iam), "iam-policy.json")
     assert pols and pols[0].source == "AWS-IAM"
 

@@ -9,13 +9,15 @@ The parse_any function sniffs JSON/XML/text content, detects the platform,
 and routes to the right parser. Returns a list of normalized Policy objects.
 """
 from __future__ import annotations
+
 import json
-import re
-from typing import Iterable
 
 from engine.policy_model import Policy
+
 from . import aws, azure, gcp, generic
-from .upsert import upsert_policies   # re-export
+from .upsert import upsert_policies as upsert_policies  # explicit re-export
+
+__all__ = ["parse_any", "upsert_policies", "Policy"]
 
 
 def parse_any(content: str | bytes, hint: str | None = None) -> list[Policy]:
@@ -48,7 +50,8 @@ def parse_any(content: str | bytes, hint: str | None = None) -> list[Policy]:
 
 
 def _route_json(doc: dict | list, hint: str | None) -> list[Policy]:
-    h = (hint or "").lower()
+    # `hint` reserved for future format-specific dispatch; suppress unused warn.
+    _ = hint
     flat = json.dumps(doc)[:2000].lower() if isinstance(doc, (dict, list)) else ""
 
     # ---------- AWS family ----------

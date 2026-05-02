@@ -15,36 +15,52 @@ Endpoints:
   GET  /api/graph/{cve}          -> Subgraph (nodes/edges) for visualization
   GET  /api/stats                -> Top-level counts for the home dashboard
 """
-from __future__ import annotations
-from pathlib import Path
-from typing import Any
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from __future__ import annotations
+
+from pathlib import Path
+
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from config import settings
-from engine.graph import run_read, get_driver, close_driver
-from engine.risk_scoring import score_dict
-from engine.osi_classifier import classify, LAYER_NAMES
+from engine import (
+    clinical_runner,
+    defense,
+    dna,
+    healthcare,
+    hipaa,
+    llm,
+    model_card,
+    patch_twin,
+    posture,
+    sra_report,
+)
 from engine.attack_chain import build_chain, chains_for_packages
-from engine import llm, dna, patch_twin, defense, posture
-from engine import healthcare, hipaa, sra_report, clinical_runner, model_card
-from ingest.sbom import scan as sbom_scan
-from ingest.telemetry import ingest_kev, kev_summary
+from engine.graph import close_driver, get_driver, run_read
+from engine.osi_classifier import LAYER_NAMES, classify
+from engine.risk_scoring import score_dict
 from ingest.policies import parse_any as parse_policy
 from ingest.policies.upsert import upsert_policies
+from ingest.sbom import scan as sbom_scan
+from ingest.telemetry import ingest_kev, kev_summary
 
 UI_DIR = Path(__file__).resolve().parent.parent / "ui"
 
-app = FastAPI(title="Cybersecurity Nexus", version="1.0.0",
-              description="Graph-powered CVE/CWE/Package/AI-Threat nexus across all 7 OSI layers")
+app = FastAPI(
+    title="Cybersecurity Nexus",
+    version="1.0.0",
+    description="Graph-powered CVE/CWE/Package/AI-Threat nexus across all 7 OSI layers",
+)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -64,6 +80,7 @@ def favicon():
     # 1x1 transparent SVG so the browser stops 404-ing
     svg = b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y="80" font-size="80">\xe2\xac\xa2</text></svg>'
     from fastapi.responses import Response
+
     return Response(content=svg, media_type="image/svg+xml")
 
 
@@ -72,12 +89,12 @@ app.mount("/ui", StaticFiles(directory=UI_DIR), name="ui")
 
 # --------------------------- Global error handler --------------------------
 from fastapi.requests import Request
-from fastapi.exceptions import RequestValidationError
 
 
 @app.exception_handler(Exception)
 async def _generic_exc_handler(request: Request, exc: Exception):
     import traceback as _tb
+
     body = {
         "error": type(exc).__name__,
         "message": str(exc),
@@ -103,10 +120,10 @@ def stats() -> dict:
     # Neo4j 5+ uses COUNT { ... } subqueries instead of size([(n) | n])
     counts = {"cves": 0, "cwes": 0, "packages": 0, "pocs": 0, "ai_threats": 0}
     queries = {
-        "cves":       "MATCH (c:CVE)      RETURN count(c) AS n",
-        "cwes":       "MATCH (c:CWE)      RETURN count(c) AS n",
-        "packages":   "MATCH (p:Package)  RETURN count(p) AS n",
-        "pocs":       "MATCH (p:PoC)      RETURN count(p) AS n",
+        "cves": "MATCH (c:CVE)      RETURN count(c) AS n",
+        "cwes": "MATCH (c:CWE)      RETURN count(c) AS n",
+        "packages": "MATCH (p:Package)  RETURN count(p) AS n",
+        "pocs": "MATCH (p:PoC)      RETURN count(p) AS n",
         "ai_threats": "MATCH (a:AIThreat) RETURN count(a) AS n",
     }
     for key, q in queries.items():
@@ -132,7 +149,8 @@ def stats() -> dict:
 @app.get("/api/cve/{cve_id}")
 def get_cve(cve_id: str) -> dict:
     cve_id = cve_id.upper()
-    rows = run_read("""
+    rows = run_read(
+        """
         MATCH (c:CVE {id: $id})
         OPTIONAL MATCH (c)-[:CLASSIFIED_AS]->(w:CWE)
         OPTIONAL MATCH (c)-[:MAPS_TO]->(l:OSILayer)
@@ -146,7 +164,9 @@ def get_cve(cve_id: str) -> dict:
                collect(DISTINCT {ecosystem: pk.ecosystem, name: pk.name,
                                  affected: r.affected_versions, fixed: r.fixed_versions}) AS packages,
                collect(DISTINCT a{.id, .name, .framework}) AS ai_threats
-    """, id=cve_id)
+    """,
+        id=cve_id,
+    )
     if not rows or not rows[0]["cve"]:
         raise HTTPException(404, f"{cve_id} not found")
     data = rows[0]
@@ -157,14 +177,16 @@ def get_cve(cve_id: str) -> dict:
     data["layers"] = [l for l in data["layers"] if l.get("number")]
     data["ai_threats"] = [a for a in data["ai_threats"] if a.get("id")]
     # Compute risk
-    data["risk"] = score_dict({
-        "cvss_score": data["cve"].get("cvss_score"),
-        "cwe_ids": [c["id"] for c in data["cwes"]],
-        "osi_layers": [l["number"] for l in data["layers"]],
-        "poc_count": len(data["pocs"]),
-        "package_count": len(data["packages"]),
-        "published": data["cve"].get("published"),
-    })
+    data["risk"] = score_dict(
+        {
+            "cvss_score": data["cve"].get("cvss_score"),
+            "cwe_ids": [c["id"] for c in data["cwes"]],
+            "osi_layers": [l["number"] for l in data["layers"]],
+            "poc_count": len(data["pocs"]),
+            "package_count": len(data["packages"]),
+            "published": data["cve"].get("published"),
+        }
+    )
     return data
 
 
@@ -179,28 +201,43 @@ def get_cwe(cwe_id: str) -> dict:
     if not base or not base[0].get("cwe"):
         raise HTTPException(404, f"{cwe_id} not found")
 
-    parents = run_read("""
+    parents = run_read(
+        """
         MATCH (w:CWE {id: $id})-[:CHILD_OF]->(p:CWE)
         RETURN p.id AS id, p.name AS name LIMIT 25
-    """, id=cwe_id)
-    children = run_read("""
+    """,
+        id=cwe_id,
+    )
+    children = run_read(
+        """
         MATCH (c:CWE)-[:CHILD_OF]->(w:CWE {id: $id})
         RETURN c.id AS id, c.name AS name LIMIT 25
-    """, id=cwe_id)
-    layers = run_read("""
+    """,
+        id=cwe_id,
+    )
+    layers = run_read(
+        """
         MATCH (w:CWE {id: $id})-[:MAPS_TO]->(l:OSILayer)
         RETURN l.number AS number, l.name AS name ORDER BY l.number
-    """, id=cwe_id)
-    cves = run_read("""
+    """,
+        id=cwe_id,
+    )
+    cves = run_read(
+        """
         MATCH (c:CVE)-[:CLASSIFIED_AS]->(w:CWE {id: $id})
         RETURN c.id AS id, c.cvss_score AS cvss_score, c.severity AS severity
         ORDER BY coalesce(c.cvss_score, 0) DESC, c.id DESC
         LIMIT 50
-    """, id=cwe_id)
-    counts = run_read("""
+    """,
+        id=cwe_id,
+    )
+    counts = run_read(
+        """
         MATCH (w:CWE {id: $id})
         RETURN COUNT { (:CVE)-[:CLASSIFIED_AS]->(w) } AS cve_count
-    """, id=cwe_id)
+    """,
+        id=cwe_id,
+    )
     return {
         "cwe": base[0]["cwe"],
         "parents": parents,
@@ -215,13 +252,16 @@ def get_cwe(cwe_id: str) -> dict:
 @app.get("/api/package/{ecosystem}/{name:path}")
 def get_package(ecosystem: str, name: str) -> dict:
     purl = f"pkg:{ecosystem.lower()}/{name}"
-    rows = run_read("""
+    rows = run_read(
+        """
         MATCH (p:Package {purl: $purl})
         OPTIONAL MATCH (c:CVE)-[r:AFFECTS]->(p)
         RETURN p{.*} AS pkg,
                collect(DISTINCT c{.id, .cvss_score, .severity, .description,
                                  affected: r.affected_versions, fixed: r.fixed_versions}) AS cves
-    """, purl=purl)
+    """,
+        purl=purl,
+    )
     if not rows or not rows[0]["pkg"]:
         raise HTTPException(404, f"package {ecosystem}:{name} not found")
     rows[0]["cves"] = [c for c in rows[0]["cves"] if c.get("id")]
@@ -235,31 +275,59 @@ def search(q: str, limit: int = 25) -> dict:
     if not q:
         return {"cves": [], "cwes": [], "packages": [], "ai_threats": []}
     # Use full-text indexes; fall back to CONTAINS if FTS misses.
-    cves = run_read("""
+    cves = (
+        run_read(
+            """
         CALL db.index.fulltext.queryNodes('cve_search', $q + '*')
         YIELD node, score
         RETURN node.id AS id, node.severity AS severity,
                node.cvss_score AS cvss, node.description AS description, score
         ORDER BY score DESC LIMIT $limit
-    """, q=q, limit=limit) or []
-    cwes = run_read("""
+    """,
+            q=q,
+            limit=limit,
+        )
+        or []
+    )
+    cwes = (
+        run_read(
+            """
         CALL db.index.fulltext.queryNodes('cwe_search', $q + '*')
         YIELD node, score
         RETURN node.id AS id, node.name AS name, score
         ORDER BY score DESC LIMIT $limit
-    """, q=q, limit=limit) or []
-    pkgs = run_read("""
+    """,
+            q=q,
+            limit=limit,
+        )
+        or []
+    )
+    pkgs = (
+        run_read(
+            """
         CALL db.index.fulltext.queryNodes('package_search', $q + '*')
         YIELD node, score
         RETURN node.ecosystem AS ecosystem, node.name AS name, node.purl AS purl, score
         ORDER BY score DESC LIMIT $limit
-    """, q=q, limit=limit) or []
-    ai = run_read("""
+    """,
+            q=q,
+            limit=limit,
+        )
+        or []
+    )
+    ai = (
+        run_read(
+            """
         CALL db.index.fulltext.queryNodes('ai_threat_search', $q + '*')
         YIELD node, score
         RETURN node.id AS id, node.name AS name, node.framework AS framework, score
         ORDER BY score DESC LIMIT $limit
-    """, q=q, limit=limit) or []
+    """,
+            q=q,
+            limit=limit,
+        )
+        or []
+    )
     return {"cves": cves, "cwes": cwes, "packages": pkgs, "ai_threats": ai}
 
 
@@ -278,35 +346,50 @@ def by_layer(layer: int, limit: int = 100) -> dict:
     if not layer_rows:
         raise HTTPException(404, "layer not found")
 
-    cves = run_read("""
+    cves = run_read(
+        """
         MATCH (l:OSILayer {number: $layer})<-[:MAPS_TO]-(c:CVE)
         RETURN c.id AS id, c.cvss_score AS cvss_score, c.severity AS severity
         ORDER BY coalesce(c.cvss_score, 0) DESC, c.id DESC
         LIMIT $limit
-    """, layer=layer, limit=limit)
+    """,
+        layer=layer,
+        limit=limit,
+    )
 
-    cwes = run_read("""
+    cwes = run_read(
+        """
         MATCH (l:OSILayer {number: $layer})<-[:MAPS_TO]-(w:CWE)
         RETURN w.id AS id, w.name AS name
         ORDER BY w.id
         LIMIT $limit
-    """, layer=layer, limit=limit)
+    """,
+        layer=layer,
+        limit=limit,
+    )
 
-    ai_threats = run_read("""
+    ai_threats = run_read(
+        """
         MATCH (l:OSILayer {number: $layer})<-[:MAPS_TO]-(a:AIThreat)
         RETURN a.id AS id, a.name AS name, a.framework AS framework
         ORDER BY a.framework, a.id
         LIMIT $limit
-    """, layer=layer, limit=limit)
+    """,
+        layer=layer,
+        limit=limit,
+    )
 
     # Total counts (cheap with the CVE→OSI index)
-    counts = run_read("""
+    counts = run_read(
+        """
         MATCH (l:OSILayer {number: $layer})
         RETURN
           COUNT { (l)<-[:MAPS_TO]-(:CVE) }      AS cve_total,
           COUNT { (l)<-[:MAPS_TO]-(:CWE) }      AS cwe_total,
           COUNT { (l)<-[:MAPS_TO]-(:AIThreat) } AS ai_total
-    """, layer=layer)
+    """,
+        layer=layer,
+    )
     totals = counts[0] if counts else {"cve_total": 0, "cwe_total": 0, "ai_total": 0}
 
     return {
@@ -337,17 +420,24 @@ def ai_vulns() -> list[dict]:
 # --------------------------- PoC -------------------------------------------
 @app.get("/api/poc/{cve_id}")
 def get_poc(cve_id: str) -> list[dict]:
-    return run_read("""
+    return (
+        run_read(
+            """
         MATCH (c:CVE {id: $id})-[:HAS_POC]->(p:PoC)
         RETURN p{.*} AS poc
         ORDER BY p.fetched DESC
-    """, id=cve_id.upper()) or []
+    """,
+            id=cve_id.upper(),
+        )
+        or []
+    )
 
 
 # --------------------------- Risk ------------------------------------------
 @app.get("/api/risk/{cve_id}")
 def get_risk(cve_id: str) -> dict:
-    rows = run_read("""
+    rows = run_read(
+        """
         MATCH (c:CVE {id: $id})
         OPTIONAL MATCH (c)-[:CLASSIFIED_AS]->(w:CWE)
         OPTIONAL MATCH (c)-[:MAPS_TO]->(l:OSILayer)
@@ -358,21 +448,30 @@ def get_risk(cve_id: str) -> dict:
                collect(DISTINCT l.number) AS layers,
                count(DISTINCT p) AS poc,
                count(DISTINCT pk) AS pkgs
-    """, id=cve_id.upper())
+    """,
+        id=cve_id.upper(),
+    )
     if not rows:
         raise HTTPException(404, f"{cve_id} not found")
     r = rows[0]
-    return score_dict({
-        "cvss_score": r["cvss"], "cwe_ids": r["cwes"], "osi_layers": r["layers"],
-        "poc_count": r["poc"], "package_count": r["pkgs"], "published": r["pub"],
-    })
+    return score_dict(
+        {
+            "cvss_score": r["cvss"],
+            "cwe_ids": r["cwes"],
+            "osi_layers": r["layers"],
+            "poc_count": r["poc"],
+            "package_count": r["pkgs"],
+            "published": r["pub"],
+        }
+    )
 
 
 # --------------------------- Graph subgraph --------------------------------
 @app.get("/api/graph/{cve_id}")
 def graph_for(cve_id: str) -> dict:
     """Return a Cytoscape-friendly node/edge list for the CVE neighborhood."""
-    rows = run_read("""
+    rows = run_read(
+        """
         MATCH (c:CVE {id: $id})
         OPTIONAL MATCH (c)-[r1:CLASSIFIED_AS]->(w:CWE)
         OPTIONAL MATCH (c)-[r2:MAPS_TO]->(l:OSILayer)
@@ -381,16 +480,24 @@ def graph_for(cve_id: str) -> dict:
         OPTIONAL MATCH (a:AIThreat)-[r5:RELATED_TO]->(c)
         OPTIONAL MATCH (w)-[r6:MAPS_TO]->(l2:OSILayer)
         RETURN c, w, l, p, pk, a, l2
-    """, id=cve_id.upper())
+    """,
+        id=cve_id.upper(),
+    )
     nodes: dict[str, dict] = {}
     edges: list[dict] = []
 
     def add(node, label):
-        if node is None: return None
-        if not isinstance(node, dict): return None
+        if node is None:
+            return None
+        if not isinstance(node, dict):
+            return None
         # Pick the best identifying field per node type
-        ident = (node.get("id") or node.get("purl") or node.get("url")
-                 or (str(node["number"]) if node.get("number") is not None else None))
+        ident = (
+            node.get("id")
+            or node.get("purl")
+            or node.get("url")
+            or (str(node["number"]) if node.get("number") is not None else None)
+        )
         if not ident:
             return None
         key = f"{label}:{ident}"
@@ -409,12 +516,18 @@ def graph_for(cve_id: str) -> dict:
 
     for r in rows:
         cve_k = add(r["c"], "CVE")
-        if r["w"]:  edge(cve_k, add(r["w"], "CWE"), "CLASSIFIED_AS")
-        if r["l"]:  edge(cve_k, add(r["l"], "OSILayer"), "MAPS_TO")
-        if r["p"]:  edge(cve_k, add(r["p"], "PoC"), "HAS_POC")
-        if r["pk"]: edge(cve_k, add(r["pk"], "Package"), "AFFECTS")
-        if r["a"]:  edge(add(r["a"], "AIThreat"), cve_k, "RELATED_TO")
-        if r["w"] and r["l2"]: edge(add(r["w"], "CWE"), add(r["l2"], "OSILayer"), "MAPS_TO")
+        if r["w"]:
+            edge(cve_k, add(r["w"], "CWE"), "CLASSIFIED_AS")
+        if r["l"]:
+            edge(cve_k, add(r["l"], "OSILayer"), "MAPS_TO")
+        if r["p"]:
+            edge(cve_k, add(r["p"], "PoC"), "HAS_POC")
+        if r["pk"]:
+            edge(cve_k, add(r["pk"], "Package"), "AFFECTS")
+        if r["a"]:
+            edge(add(r["a"], "AIThreat"), cve_k, "RELATED_TO")
+        if r["w"] and r["l2"]:
+            edge(add(r["w"], "CWE"), add(r["l2"], "OSILayer"), "MAPS_TO")
     return {"nodes": list(nodes.values()), "edges": edges}
 
 
@@ -428,6 +541,7 @@ def classify_text(text: str, cwe: str | None = None) -> dict:
 # =====================================================================
 # Phase B endpoints: attack chains, SBOM, LLM, DNA, twins, defense, telemetry
 # =====================================================================
+
 
 # --------------------------- Attack chains ---------------------------------
 @app.get("/api/attack-chain/{cve_id}")
@@ -450,8 +564,12 @@ async def sbom(file: UploadFile = File(...)) -> dict:
 # --------------------------- LLM storyteller -------------------------------
 @app.get("/api/llm/health")
 def llm_health() -> dict:
-    return {"available": llm.is_available(), "url": llm.OLLAMA_URL,
-            "default_model": llm.DEFAULT_MODEL, "embed_model": llm.EMBED_MODEL}
+    return {
+        "available": llm.is_available(),
+        "url": llm.OLLAMA_URL,
+        "default_model": llm.DEFAULT_MODEL,
+        "embed_model": llm.EMBED_MODEL,
+    }
 
 
 @app.get("/api/story/{cve_id}")
@@ -475,15 +593,16 @@ def story_stream(cve_id: str):
 
     def gen():
         try:
-            for chunk in llm.stream_story(cve, packages=cve.get("packages") or []):
-                yield chunk
+            yield from llm.stream_story(cve, packages=cve.get("packages") or [])
         except llm.LLMUnavailable as e:
             yield f"\n\n[LLM unavailable: {e}]"
+
     return StreamingResponse(gen(), media_type="text/plain")
 
 
 def _cve_for_llm(cve_id: str) -> dict | None:
-    rows = run_read("""
+    rows = run_read(
+        """
         MATCH (c:CVE {id: $id})
         OPTIONAL MATCH (c)-[:CLASSIFIED_AS]->(w:CWE)
         OPTIONAL MATCH (c)-[:MAPS_TO]->(l:OSILayer)
@@ -495,7 +614,9 @@ def _cve_for_llm(cve_id: str) -> dict | None:
                collect(DISTINCT l.number) AS layers,
                count(DISTINCT p) AS poc_count,
                collect(DISTINCT pk.purl)[0..6] AS packages
-    """, id=cve_id.upper())
+    """,
+        id=cve_id.upper(),
+    )
     return rows[0] if rows and rows[0].get("id") else None
 
 
@@ -510,14 +631,27 @@ class RedTeamRequest(BaseModel):
 def red_team(req: RedTeamRequest) -> dict:
     chains = chains_for_packages(req.purls or [], entry=req.entry, per_seed=1) if req.purls else []
     aggregate = max((c["score"] for c in chains), default=0.0)
-    band = "CRITICAL" if aggregate >= 80 else "HIGH" if aggregate >= 60 else "MEDIUM" if aggregate >= 40 else "LOW"
+    band = (
+        "CRITICAL"
+        if aggregate >= 80
+        else "HIGH"
+        if aggregate >= 60
+        else "MEDIUM"
+        if aggregate >= 40
+        else "LOW"
+    )
     try:
         plan = llm.red_team_plan(req.stack_summary, chains, aggregate=aggregate, band=band)
     except llm.LLMUnavailable as e:
         # Fall back to a structured (non-LLM) plan
         plan = _fallback_red_team(req.stack_summary, chains, aggregate, band, str(e))
-    return {"stack_summary": req.stack_summary, "chains": chains,
-            "aggregate_score": aggregate, "band": band, "plan": plan}
+    return {
+        "stack_summary": req.stack_summary,
+        "chains": chains,
+        "aggregate_score": aggregate,
+        "band": band,
+        "plan": plan,
+    }
 
 
 def _fallback_red_team(summary: str, chains: list[dict], agg: float, band: str, err: str) -> str:
@@ -531,8 +665,14 @@ def _fallback_red_team(summary: str, chains: list[dict], agg: float, band: str, 
     for c in chains[:2]:
         out.append(f"\n### Chain (score {c['score']}, layers {c['layers_traversed']})")
         for s in c["steps"]:
-            arrow = f"L{s['layer_from']}→L{s['layer_to']}" if s.get("layer_from") else f"L{s['layer_to']}"
-            out.append(f"  - {arrow}  **{s['cve']}** ({s.get('severity','?')}) — {s.get('transition')}")
+            arrow = (
+                f"L{s['layer_from']}→L{s['layer_to']}"
+                if s.get("layer_from")
+                else f"L{s['layer_to']}"
+            )
+            out.append(
+                f"  - {arrow}  **{s['cve']}** ({s.get('severity', '?')}) — {s.get('transition')}"
+            )
     return "\n".join(out)
 
 
@@ -581,6 +721,7 @@ def telemetry_kev() -> dict:
 # Posture / Policy Validation endpoints
 # =====================================================================
 
+
 class PolicyPasteRequest(BaseModel):
     content: str
     hint: str | None = None
@@ -597,11 +738,14 @@ async def policies_upload(files: list[UploadFile] = File(...)) -> dict:
             policies = parse_policy(content, hint=f.filename or "")
             n = upsert_policies(policies)
             total += n
-            parsed_per_file.append({
-                "filename": f.filename, "policies": n,
-                "controls": sum(len(p.controls) for p in policies),
-                "platforms": sorted({p.source for p in policies}),
-            })
+            parsed_per_file.append(
+                {
+                    "filename": f.filename,
+                    "policies": n,
+                    "controls": sum(len(p.controls) for p in policies),
+                    "platforms": sorted({p.source for p in policies}),
+                }
+            )
         except Exception as e:
             parsed_per_file.append({"filename": f.filename, "error": str(e)})
     return {"imported": total, "files": parsed_per_file}
@@ -612,18 +756,24 @@ def policies_paste(req: PolicyPasteRequest) -> dict:
     """Paste-in JSON from the UI."""
     policies = parse_policy(req.content, hint=req.hint)
     n = upsert_policies(policies)
-    return {"imported": n,
-            "platforms": sorted({p.source for p in policies}),
-            "controls": sum(len(p.controls) for p in policies)}
+    return {
+        "imported": n,
+        "platforms": sorted({p.source for p in policies}),
+        "controls": sum(len(p.controls) for p in policies),
+    }
 
 
 @app.delete("/api/policies/clear")
 def policies_clear() -> dict:
     """Wipe all uploaded policies (kept simple - no auth here, local use only)."""
     rows = run_read("MATCH (p:Policy) DETACH DELETE p RETURN count(p) AS n")
-    rows2 = run_read("MATCH (c:Control) WHERE NOT (c)<-[:CONTAINS]-() DETACH DELETE c RETURN count(c) AS n")
-    return {"deleted_policies": rows[0]["n"] if rows else 0,
-            "deleted_orphan_controls": rows2[0]["n"] if rows2 else 0}
+    rows2 = run_read(
+        "MATCH (c:Control) WHERE NOT (c)<-[:CONTAINS]-() DETACH DELETE c RETURN count(c) AS n"
+    )
+    return {
+        "deleted_policies": rows[0]["n"] if rows else 0,
+        "deleted_orphan_controls": rows2[0]["n"] if rows2 else 0,
+    }
 
 
 @app.get("/api/policies")
@@ -694,22 +844,29 @@ class SRARequest(BaseModel):
     organization: str | None = "Your Organization"
     scope: str | None = "Production environment"
     stack_summary: str | None = ""
-    format: str | None = "markdown"   # "markdown" | "docx"
+    format: str | None = "markdown"  # "markdown" | "docx"
 
 
 @app.post("/api/hipaa/sra")
 def hipaa_sra_endpoint(req: SRARequest):
     if req.format == "docx":
         data = sra_report.generate_docx(
-            stack_summary=req.stack_summary or "", scope=req.scope or "",
-            organization=req.organization or "")
+            stack_summary=req.stack_summary or "",
+            scope=req.scope or "",
+            organization=req.organization or "",
+        )
         from fastapi.responses import Response
-        return Response(content=data,
-                        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        headers={"Content-Disposition": "attachment; filename=HIPAA_SRA.docx"})
-    md = sra_report.generate_markdown(stack_summary=req.stack_summary or "",
-                                       scope=req.scope or "",
-                                       organization=req.organization or "")
+
+        return Response(
+            content=data,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": "attachment; filename=HIPAA_SRA.docx"},
+        )
+    md = sra_report.generate_markdown(
+        stack_summary=req.stack_summary or "",
+        scope=req.scope or "",
+        organization=req.organization or "",
+    )
     return {"format": "markdown", "report": md}
 
 
@@ -727,26 +884,34 @@ class ClinicalRunRequest(BaseModel):
 @app.post("/api/clinical-ai/run")
 def clinical_run(req: ClinicalRunRequest) -> dict:
     findings = clinical_runner.run_tests(
-        model=req.model, categories=req.categories,
-        api_base=req.api_base, api_key=req.api_key, limit=req.limit)
+        model=req.model,
+        categories=req.categories,
+        api_base=req.api_base,
+        api_key=req.api_key,
+        limit=req.limit,
+    )
     s = clinical_runner.summary(req.model)
     return {"model": req.model, "findings": findings, "summary": s}
 
 
 @app.get("/api/clinical-ai/findings")
 def clinical_findings(model: str | None = None, limit: int = 200) -> dict:
-    return {"findings": clinical_runner.list_findings(model, limit),
-            "summary": clinical_runner.summary(model)}
+    return {
+        "findings": clinical_runner.list_findings(model, limit),
+        "summary": clinical_runner.summary(model),
+    }
 
 
 @app.get("/api/clinical-ai/categories")
 def clinical_categories() -> dict:
-    from engine.clinical_ai_corpus import GENERATORS, build_corpus
+    from engine.clinical_ai_corpus import GENERATORS
+
     out = []
     for cat in GENERATORS:
         cases = GENERATORS[cat]()
-        out.append({"category": cat, "case_count": len(cases),
-                    "example_id": cases[0].id if cases else "—"})
+        out.append(
+            {"category": cat, "case_count": len(cases), "example_id": cases[0].id if cases else "—"}
+        )
     return {"categories": out, "total_cases": sum(c["case_count"] for c in out)}
 
 
@@ -759,7 +924,7 @@ class ModelCardRequest(BaseModel):
     monitoring_plan: str = ""
     deployment_context: str = ""
     organization: str = "Your Organization"
-    format: str = "markdown"   # "markdown" | "docx"
+    format: str = "markdown"  # "markdown" | "docx"
 
 
 @app.post("/api/clinical-ai/model-card")
@@ -767,15 +932,19 @@ def clinical_model_card(req: ModelCardRequest):
     if req.format == "docx":
         data = model_card.generate_docx(**req.dict(exclude={"format"}))
         from fastapi.responses import Response
-        return Response(content=data,
-                        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        headers={"Content-Disposition": "attachment; filename=model_card.docx"})
+
+        return Response(
+            content=data,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": "attachment; filename=model_card.docx"},
+        )
     md = model_card.generate_markdown(**req.dict(exclude={"format"}))
     return {"format": "markdown", "report": md}
 
 
 def main() -> None:
     import uvicorn
+
     uvicorn.run("api.server:app", host=settings.api_host, port=settings.api_port, reload=False)
 
 

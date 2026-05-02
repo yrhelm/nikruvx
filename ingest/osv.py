@@ -20,25 +20,57 @@ Usage:
   python -m ingest.osv --ecosystem npm --packages express lodash
   python -m ingest.osv --seed
 """
+
 from __future__ import annotations
+
 import argparse
+
 from rich.progress import Progress
 
-from .common import http_client, upsert_cve, link_cve_package, console, polite_sleep
+from .common import console, http_client, link_cve_package, polite_sleep, upsert_cve
 
 OSV_QUERY = "https://api.osv.dev/v1/query"
-OSV_VULN  = "https://api.osv.dev/v1/vulns"
+OSV_VULN = "https://api.osv.dev/v1/vulns"
 
 # A small curated seed list - real users can extend or pipe in their own SBOM.
 SEED_PACKAGES: dict[str, list[str]] = {
-    "npm":      ["express", "lodash", "axios", "react", "next", "vue", "tar", "minimist", "node-fetch", "ws"],
-    "PyPI":     ["django", "flask", "requests", "pyyaml", "numpy", "pillow", "cryptography", "fastapi", "tensorflow", "torch", "transformers", "langchain"],
-    "Maven":    ["org.springframework:spring-core", "com.fasterxml.jackson.core:jackson-databind", "org.apache.logging.log4j:log4j-core", "org.apache.tomcat:tomcat-catalina"],
-    "Go":       ["github.com/gin-gonic/gin", "github.com/gorilla/websocket", "github.com/labstack/echo"],
+    "npm": [
+        "express",
+        "lodash",
+        "axios",
+        "react",
+        "next",
+        "vue",
+        "tar",
+        "minimist",
+        "node-fetch",
+        "ws",
+    ],
+    "PyPI": [
+        "django",
+        "flask",
+        "requests",
+        "pyyaml",
+        "numpy",
+        "pillow",
+        "cryptography",
+        "fastapi",
+        "tensorflow",
+        "torch",
+        "transformers",
+        "langchain",
+    ],
+    "Maven": [
+        "org.springframework:spring-core",
+        "com.fasterxml.jackson.core:jackson-databind",
+        "org.apache.logging.log4j:log4j-core",
+        "org.apache.tomcat:tomcat-catalina",
+    ],
+    "Go": ["github.com/gin-gonic/gin", "github.com/gorilla/websocket", "github.com/labstack/echo"],
     "RubyGems": ["rails", "nokogiri", "rack", "devise"],
-    "crates.io":["tokio", "serde", "actix-web", "openssl"],
-    "Debian":   ["openssl", "openssh-server", "bind9", "sudo"],
-    "Alpine":   ["openssl", "musl", "busybox"],
+    "crates.io": ["tokio", "serde", "actix-web", "openssl"],
+    "Debian": ["openssl", "openssh-server", "bind9", "sudo"],
+    "Alpine": ["openssl", "musl", "busybox"],
 }
 
 
@@ -48,7 +80,7 @@ def _cwes_from_record(rec: dict) -> list[str]:
     for c in db.get("cwe_ids", []) or []:
         out.append(c if c.upper().startswith("CWE-") else f"CWE-{c}")
     # GHSA records embed CWEs under the ghsa db_specific section
-    for ref in rec.get("references", []):
+    for _ref in rec.get("references", []):
         # Some records put CWEs in tags
         pass
     return list(dict.fromkeys(out))
@@ -130,8 +162,10 @@ def ingest_package(ecosystem: str, name: str) -> int:
                 continue
             for r in aff.get("ranges", []) or []:
                 for ev in r.get("events", []) or []:
-                    if "introduced" in ev: affected_versions.append(f">={ev['introduced']}")
-                    if "fixed" in ev:      fixed_versions.append(ev["fixed"])
+                    if "introduced" in ev:
+                        affected_versions.append(f">={ev['introduced']}")
+                    if "fixed" in ev:
+                        fixed_versions.append(ev["fixed"])
             for v in aff.get("versions", []) or []:
                 affected_versions.append(v)
         link_cve_package(cve_id, ecosystem, name, affected_versions, fixed_versions)
@@ -155,14 +189,16 @@ def seed_all() -> int:
 
 def main() -> None:
     p = argparse.ArgumentParser(description="Ingest OSV.dev CVE-package mappings")
-    p.add_argument("--ecosystem", help="npm | PyPI | Maven | Go | RubyGems | crates.io | Debian | Alpine")
+    p.add_argument(
+        "--ecosystem", help="npm | PyPI | Maven | Go | RubyGems | crates.io | Debian | Alpine"
+    )
     p.add_argument("--packages", nargs="+", help="Package names")
     p.add_argument("--seed", action="store_true", help="Use built-in seed list")
     args = p.parse_args()
     if args.seed or (not args.ecosystem and not args.packages):
         seed_all()
     else:
-        for name in (args.packages or []):
+        for name in args.packages or []:
             ingest_package(args.ecosystem, name)
 
 

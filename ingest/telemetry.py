@@ -13,13 +13,17 @@ Usage:
     python -m ingest.telemetry              # full refresh
     python -m ingest.telemetry --kev-only
 """
+
 from __future__ import annotations
+
 import argparse
 import os
+
 from rich.console import Console
 
-from .common import http_client, polite_sleep
 from engine.graph import run_write, session
+
+from .common import http_client, polite_sleep
 
 console = Console()
 KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
@@ -43,12 +47,15 @@ def ingest_kev() -> int:
             c.exploited_known_ransom = item.knownRansomwareCampaignUse,
             c.exploited_required_action = item.requiredAction
     """
-    payload = [{
-        "cveID": v["cveID"],
-        "dateAdded": v.get("dateAdded"),
-        "knownRansomwareCampaignUse": v.get("knownRansomwareCampaignUse", "Unknown"),
-        "requiredAction": v.get("requiredAction"),
-    } for v in items]
+    payload = [
+        {
+            "cveID": v["cveID"],
+            "dateAdded": v.get("dateAdded"),
+            "knownRansomwareCampaignUse": v.get("knownRansomwareCampaignUse", "Unknown"),
+            "requiredAction": v.get("requiredAction"),
+        }
+        for v in items
+    ]
     with session() as s:
         s.run(cypher, items=payload)
     console.print(f"[green]CISA KEV: {len(items)} CVEs marked actively-exploited")
@@ -65,7 +72,10 @@ def ingest_greynoise(cves: list[str] | None = None) -> int:
     headers = {"key": key}
     if cves is None:
         from engine.graph import run_read
-        rows = run_read("MATCH (c:CVE) WHERE c.severity IN ['CRITICAL','HIGH'] RETURN c.id AS id LIMIT 200")
+
+        rows = run_read(
+            "MATCH (c:CVE) WHERE c.severity IN ['CRITICAL','HIGH'] RETURN c.id AS id LIMIT 200"
+        )
         cves = [r["id"] for r in rows]
     count = 0
     with http_client(headers=headers) as c:
@@ -74,12 +84,17 @@ def ingest_greynoise(cves: list[str] | None = None) -> int:
             if r.status_code != 200:
                 continue
             data = r.json()
-            run_write("""
+            run_write(
+                """
                 MATCH (c:CVE {id: $id})
                 SET c.exploited_greynoise = true,
                     c.greynoise_classification = $cls,
                     c.greynoise_last_seen = $seen
-            """, id=cve, cls=data.get("classification"), seen=data.get("last_seen"))
+            """,
+                id=cve,
+                cls=data.get("classification"),
+                seen=data.get("last_seen"),
+            )
             count += 1
             polite_sleep(0.6)
     console.print(f"[green]GreyNoise enriched {count} CVEs")
@@ -88,6 +103,7 @@ def ingest_greynoise(cves: list[str] | None = None) -> int:
 
 def kev_summary() -> dict:
     from engine.graph import run_read
+
     rows = run_read("""
         MATCH (c:CVE) WHERE c.exploited_kev = true
         OPTIONAL MATCH (c)-[:MAPS_TO]->(l:OSILayer)

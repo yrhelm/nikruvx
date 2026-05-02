@@ -10,12 +10,14 @@ your environment, populated from:
 Sections follow the FDA Good Machine Learning Practice (GMLP) 10 Guiding
 Principles + the FDA Pre-Submission package layout.
 """
+
 from __future__ import annotations
+
 import datetime as _dt
 from io import BytesIO
 
-from .graph import run_read
 from .clinical_runner import list_findings, summary
+from .graph import run_read
 from .hipaa import owasp_llm_citations
 
 
@@ -42,8 +44,11 @@ def _findings_table(model: str | None) -> tuple[str, dict]:
     s = summary(model)
     findings = list_findings(model, limit=200)
     if not findings:
-        return ("_No clinical-AI test results yet. Run `python -m engine.clinical_runner --model "
-                f"{model or '<your-model>'}`._", s)
+        return (
+            "_No clinical-AI test results yet. Run `python -m engine.clinical_runner --model "
+            f"{model or '<your-model>'}`._",
+            s,
+        )
     by_cat: dict[str, list] = {}
     for f in findings:
         by_cat.setdefault(f["category"], []).append(f)
@@ -57,9 +62,9 @@ def _findings_table(model: str | None) -> tuple[str, dict]:
         for f in items[:8]:
             parts.append(
                 f"| {f['test_id']} | {'✓' if f['passed'] else '✗'} "
-                f"| {f.get('severity','—')} | {f.get('capability','—')} "
-                f"| {(f.get('reason') or '').replace('|',' ')[:80]} "
-                f"| {(f.get('citation') or '').replace('|',' ')} |"
+                f"| {f.get('severity', '—')} | {f.get('capability', '—')} "
+                f"| {(f.get('reason') or '').replace('|', ' ')[:80]} "
+                f"| {(f.get('citation') or '').replace('|', ' ')} |"
             )
     return "\n".join(parts), s
 
@@ -67,18 +72,26 @@ def _findings_table(model: str | None) -> tuple[str, dict]:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
-def generate_markdown(model_name: str = "(unspecified)",
-                       intended_use: str = "",
-                       training_data: str = "",
-                       evaluation_data: str = "",
-                       limitations: str = "",
-                       monitoring_plan: str = "",
-                       deployment_context: str = "",
-                       organization: str = "Your Organization") -> str:
+def generate_markdown(
+    model_name: str = "(unspecified)",
+    intended_use: str = "",
+    training_data: str = "",
+    evaluation_data: str = "",
+    limitations: str = "",
+    monitoring_plan: str = "",
+    deployment_context: str = "",
+    organization: str = "Your Organization",
+) -> str:
     findings_md, summ = _findings_table(model_name)
-    pass_total = summ["total_pass"]; fail_total = summ["total_fail"]
-    overall = ("READY" if fail_total == 0 and pass_total > 0
-               else "NEEDS_WORK" if fail_total else "UNTESTED")
+    pass_total = summ["total_pass"]
+    fail_total = summ["total_fail"]
+    overall = (
+        "READY"
+        if fail_total == 0 and pass_total > 0
+        else "NEEDS_WORK"
+        if fail_total
+        else "UNTESTED"
+    )
     return f"""# Model Card — {model_name}
 **Organization:** {organization}
 **Generated:** {_today()}
@@ -151,17 +164,24 @@ def generate_docx(model_name: str = "(unspecified)", **kwargs) -> bytes:
     try:
         from docx import Document
     except ImportError:
-        return ("# (python-docx not installed - install with `pip install python-docx`)\n\n"
-                + generate_markdown(model_name, **kwargs)).encode("utf-8")
+        return (
+            "# (python-docx not installed - install with `pip install python-docx`)\n\n"
+            + generate_markdown(model_name, **kwargs)
+        ).encode("utf-8")
     md = generate_markdown(model_name, **kwargs)
     doc = Document()
     for line in md.splitlines():
         s = line.rstrip()
-        if s.startswith("# "):    doc.add_heading(s[2:], 0)
-        elif s.startswith("## "): doc.add_heading(s[3:], 1)
-        elif s.startswith("### "):doc.add_heading(s[4:], 2)
-        elif s.startswith("|"):    pass   # tables are noisy in docx; keep as md text
-        elif s.strip():            doc.add_paragraph(s)
+        if s.startswith("# "):
+            doc.add_heading(s[2:], 0)
+        elif s.startswith("## "):
+            doc.add_heading(s[3:], 1)
+        elif s.startswith("### "):
+            doc.add_heading(s[4:], 2)
+        elif s.startswith("|"):
+            pass  # tables are noisy in docx; keep as md text
+        elif s.strip():
+            doc.add_paragraph(s)
     buf = BytesIO()
     doc.save(buf)
     return buf.getvalue()

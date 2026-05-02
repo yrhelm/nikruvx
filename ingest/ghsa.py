@@ -13,21 +13,33 @@ Usage:
     python -m ingest.ghsa --pages 5
     python -m ingest.ghsa --severity critical --pages 10
 """
+
 from __future__ import annotations
+
 import argparse
+
 from rich.progress import Progress
 
-from .common import http_client, upsert_cve, link_cve_package, console, polite_sleep
 from config import settings
+
+from .common import console, http_client, link_cve_package, polite_sleep, upsert_cve
 
 GHSA_URL = "https://api.github.com/advisories"
 
 # GitHub ecosystem strings mapped to OSV-style ecosystems we use
 ECO_MAP = {
-    "npm": "npm", "pip": "PyPI", "maven": "Maven", "go": "Go",
-    "rubygems": "RubyGems", "rust": "crates.io", "composer": "Packagist",
-    "nuget": "NuGet", "erlang": "Hex", "actions": "GitHub Actions",
-    "pub": "Pub", "swift": "SwiftURL",
+    "npm": "npm",
+    "pip": "PyPI",
+    "maven": "Maven",
+    "go": "Go",
+    "rubygems": "RubyGems",
+    "rust": "crates.io",
+    "composer": "Packagist",
+    "nuget": "NuGet",
+    "erlang": "Hex",
+    "actions": "GitHub Actions",
+    "pub": "Pub",
+    "swift": "SwiftURL",
 }
 
 
@@ -70,7 +82,9 @@ def ingest_pages(pages: int = 5, severity: str | None = None) -> int:
                     count += _ingest_one(adv)
                 except Exception as e:
                     skipped += 1
-                    console.print(f"[yellow]  skip {adv.get('ghsa_id') or adv.get('cve_id') or '?'}: {e}")
+                    console.print(
+                        f"[yellow]  skip {adv.get('ghsa_id') or adv.get('cve_id') or '?'}: {e}"
+                    )
             bar.update(task, advance=1)
             polite_sleep(0.5)
     console.print(f"[green]GHSA ingested {count} advisories ({skipped} skipped)")
@@ -150,7 +164,9 @@ def _ingest_one(adv: dict) -> int:
         if not isinstance(vuln, dict):
             continue
         pkg = vuln.get("package") if isinstance(vuln.get("package"), dict) else {}
-        eco_raw = (pkg.get("ecosystem") or "").lower() if isinstance(pkg.get("ecosystem"), str) else ""
+        eco_raw = (
+            (pkg.get("ecosystem") or "").lower() if isinstance(pkg.get("ecosystem"), str) else ""
+        )
         ecosystem = ECO_MAP.get(eco_raw, eco_raw)
         name = pkg.get("name") if isinstance(pkg.get("name"), str) else None
         if not (ecosystem and name):

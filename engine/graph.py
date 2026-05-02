@@ -1,11 +1,27 @@
 """Neo4j driver wrapper used by ingesters, engines, and the API."""
-from __future__ import annotations
-from contextlib import contextmanager
-from datetime import date as _PyDate, datetime as _PyDateTime, time as _PyTime
-from typing import Any, Iterable
 
-from neo4j import GraphDatabase, Driver, Session
-from neo4j.time import Date as _N4jDate, DateTime as _N4jDateTime, Time as _N4jTime, Duration as _N4jDuration
+from __future__ import annotations
+
+from collections.abc import Iterable
+from contextlib import contextmanager
+from datetime import date as _PyDate
+from datetime import datetime as _PyDateTime
+from datetime import time as _PyTime
+from typing import Any
+
+from neo4j import Driver, GraphDatabase, Session
+from neo4j.time import (
+    Date as _N4jDate,
+)
+from neo4j.time import (
+    DateTime as _N4jDateTime,
+)
+from neo4j.time import (
+    Duration as _N4jDuration,
+)
+from neo4j.time import (
+    Time as _N4jTime,
+)
 
 from config import settings
 
@@ -26,8 +42,10 @@ def _json_safe(v: Any) -> Any:
     if isinstance(v, (list, tuple, set, frozenset)):
         return [_json_safe(i) for i in v]
     if isinstance(v, bytes):
-        try: return v.decode("utf-8", errors="replace")
-        except Exception: return repr(v)
+        try:
+            return v.decode("utf-8", errors="replace")
+        except Exception:
+            return repr(v)
     return v
 
 

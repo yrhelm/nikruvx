@@ -11,14 +11,13 @@ Usage:
     md = generate_markdown(stack_summary="My PHI app", scope="Production")
 """
 from __future__ import annotations
+
 import datetime as _dt
 from io import BytesIO
-from pathlib import Path
-from typing import Any
 
 from .graph import run_read
 from .healthcare import list_phi_packages_in_graph
-from .hipaa import hipaa_coverage, hipaa_gaps_for_cve, CAP_TO_CITATIONS, _cite_to_dict
+from .hipaa import hipaa_coverage, hipaa_gaps_for_cve
 from .posture import gaps_for_cve as _gaps_for_cve
 
 
@@ -230,7 +229,6 @@ def generate_docx(stack_summary: str = "", scope: str = "Production environment"
     """Optional docx variant. Falls back to a stub message if python-docx absent."""
     try:
         from docx import Document
-        from docx.shared import Pt, RGBColor
     except ImportError:
         md = generate_markdown(stack_summary, scope, organization)
         return ("# (python-docx not installed — fall back to markdown)\n\n" + md).encode("utf-8")

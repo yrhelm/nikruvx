@@ -1,11 +1,12 @@
 """Shared utilities for ingesters."""
+
 from __future__ import annotations
+
 import time
-from typing import Any
+
 import httpx
 from rich.console import Console
 
-from config import settings
 from engine.graph import session
 from engine.osi_classifier import classify
 
@@ -22,11 +23,16 @@ def http_client(timeout: float = 30.0, headers: dict | None = None) -> httpx.Cli
 
 
 def _severity_from_cvss(score: float | None) -> str:
-    if score is None: return "UNKNOWN"
-    if score >= 9: return "CRITICAL"
-    if score >= 7: return "HIGH"
-    if score >= 4: return "MEDIUM"
-    if score > 0: return "LOW"
+    if score is None:
+        return "UNKNOWN"
+    if score >= 9:
+        return "CRITICAL"
+    if score >= 7:
+        return "HIGH"
+    if score >= 4:
+        return "MEDIUM"
+    if score > 0:
+        return "LOW"
     return "NONE"
 
 
@@ -119,8 +125,9 @@ def link_cve_package(
         )
 
 
-def attach_poc(cve_id: str, url: str, source: str, language: str | None = None,
-               snippet: str | None = None) -> None:
+def attach_poc(
+    cve_id: str, url: str, source: str, language: str | None = None, snippet: str | None = None
+) -> None:
     cypher = """
     MERGE (p:PoC {url: $url})
     SET p.source = $source, p.language = $language, p.snippet = $snippet,

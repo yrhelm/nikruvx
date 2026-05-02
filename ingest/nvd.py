@@ -12,13 +12,17 @@ Usage:
     python -m ingest.nvd --cve CVE-2024-3094
     python -m ingest.nvd --year 2024 --limit 500
 """
+
 from __future__ import annotations
+
 import argparse
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+
 from rich.progress import Progress
 
-from .common import http_client, upsert_cve, console, polite_sleep
 from config import settings
+
+from .common import console, http_client, polite_sleep, upsert_cve
 
 NVD_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 
@@ -59,7 +63,7 @@ def _parse_cve(item: dict) -> dict | None:
 
 
 def ingest_recent(days: int = 7, limit: int = 200) -> int:
-    end = datetime.now(timezone.utc)
+    end = datetime.now(UTC)
     start = end - timedelta(days=days)
     params = {
         "lastModStartDate": start.strftime("%Y-%m-%dT%H:%M:%S.000"),
@@ -70,8 +74,8 @@ def ingest_recent(days: int = 7, limit: int = 200) -> int:
 
 
 def ingest_year(year: int, limit: int = 500) -> int:
-    start = datetime(year, 1, 1, tzinfo=timezone.utc)
-    end = datetime(year, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+    start = datetime(year, 1, 1, tzinfo=UTC)
+    end = datetime(year, 12, 31, 23, 59, 59, tzinfo=UTC)
     params = {
         "pubStartDate": start.strftime("%Y-%m-%dT%H:%M:%S.000"),
         "pubEndDate": end.strftime("%Y-%m-%dT%H:%M:%S.000"),
@@ -104,7 +108,7 @@ def _request_with_retry(client, params: dict, max_retries: int = 5):
                 wait = max(wait, float(ra))
             console.print(
                 f"[yellow]NVD {resp.status_code} rate-limited - waiting {wait:.0f}s "
-                f"(attempt {attempt+1}/{max_retries})"
+                f"(attempt {attempt + 1}/{max_retries})"
             )
             polite_sleep(wait)
             backoff *= 1.7

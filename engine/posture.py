@@ -14,15 +14,17 @@ Outputs three views the UI consumes:
                               control X" or "no control found - GAP")
     4. coverage_for_stack() - aggregate over an SBOM upload
 """
-from __future__ import annotations
-from collections import defaultdict
-from dataclasses import dataclass
 
+from __future__ import annotations
+
+from collections import defaultdict
+
+from .attack_chain import build_chain
 from .graph import run_read
 from .policy_capabilities import (
-    ALL_CAPS, CONTROL_CLASSES, ControlClass, by_name, for_capability,
+    ALL_CAPS,
+    for_capability,
 )
-from .attack_chain import build_chain
 
 
 # ---------------------------------------------------------------------------
@@ -41,7 +43,8 @@ def _existing_classes() -> set[str]:
 
 def _controls_for_capability(cap: str) -> list[dict]:
     """Return all Control nodes in the graph that mitigate a capability."""
-    return run_read("""
+    return run_read(
+        """
         MATCH (c:Control)
         WHERE $cap IN coalesce(c.capabilities_mitigated, [])
         OPTIONAL MATCH (p:Policy)-[:CONTAINS]->(c)
@@ -50,7 +53,9 @@ def _controls_for_capability(cap: str) -> list[dict]:
                p.id AS policy_id, p.source AS source, p.name AS policy_name
         ORDER BY p.source, c.layer
         LIMIT 50
-    """, cap=cap)
+    """,
+        cap=cap,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -72,22 +77,24 @@ def coverage() -> dict:
     for cap in sorted(ALL_CAPS):
         recommended_classes = classes_per_cap[cap]
         present_classes = [c for c in recommended_classes if c in present]
-        coverage_pct = (len(present_classes) / len(recommended_classes) * 100) \
-                       if recommended_classes else 0.0
+        coverage_pct = (
+            (len(present_classes) / len(recommended_classes) * 100) if recommended_classes else 0.0
+        )
         layer_counts = {f"L{l}": matrix[cap].get(l, 0) for l in range(1, 8)}
-        out_caps.append({
-            "capability": cap,
-            "controls_total": sum(layer_counts.values()),
-            "by_layer": layer_counts,
-            "coverage_pct": round(coverage_pct, 1),
-            "recommended_classes": recommended_classes,
-            "present_classes": present_classes,
-            "missing_classes": [c for c in recommended_classes if c not in present],
-        })
+        out_caps.append(
+            {
+                "capability": cap,
+                "controls_total": sum(layer_counts.values()),
+                "by_layer": layer_counts,
+                "coverage_pct": round(coverage_pct, 1),
+                "recommended_classes": recommended_classes,
+                "present_classes": present_classes,
+                "missing_classes": [c for c in recommended_classes if c not in present],
+            }
+        )
     # Per-layer totals (handy for the UI)
-    by_layer = {f"L{l}": sum(matrix[c].get(l,0) for c in ALL_CAPS) for l in range(1,8)}
-    return {"matrix": out_caps, "by_layer": by_layer,
-            "policies_loaded": _policy_summary()}
+    by_layer = {f"L{l}": sum(matrix[c].get(l, 0) for c in ALL_CAPS) for l in range(1, 8)}
+    return {"matrix": out_caps, "by_layer": by_layer, "policies_loaded": _policy_summary()}
 
 
 def _policy_summary() -> dict:
@@ -115,24 +122,36 @@ def gaps_for_cve(cve_id: str) -> dict:
         for cap in step.get("gain", []):
             controls = _controls_for_capability(cap)
             if controls:
-                blocks.append({
-                    "cve": step["cve"], "step_layer": step["layer_to"],
-                    "capability": cap,
-                    "controls": controls[:3],
-                    "summary": f"{cap} blocked by {len(controls)} control(s) "
-                               f"({', '.join(c.get('source','?') for c in controls[:3])})",
-                })
+                blocks.append(
+                    {
+                        "cve": step["cve"],
+                        "step_layer": step["layer_to"],
+                        "capability": cap,
+                        "controls": controls[:3],
+                        "summary": f"{cap} blocked by {len(controls)} control(s) "
+                        f"({', '.join(c.get('source', '?') for c in controls[:3])})",
+                    }
+                )
             else:
                 # Is there even a recommended control class for this capability?
                 rec = for_capability(cap)
-                gaps.append({
-                    "cve": step["cve"], "step_layer": step["layer_to"],
-                    "capability": cap,
-                    "severity": _gap_severity(cap, step),
-                    "recommended_classes": [c.name for c in rec],
-                    "remediations": [{"title": c.title, "platforms": sorted(c.platforms),
-                                       "snippet": c.remediation} for c in rec[:3]],
-                })
+                gaps.append(
+                    {
+                        "cve": step["cve"],
+                        "step_layer": step["layer_to"],
+                        "capability": cap,
+                        "severity": _gap_severity(cap, step),
+                        "recommended_classes": [c.name for c in rec],
+                        "remediations": [
+                            {
+                                "title": c.title,
+                                "platforms": sorted(c.platforms),
+                                "snippet": c.remediation,
+                            }
+                            for c in rec[:3]
+                        ],
+                    }
+                )
 
     gaps.sort(key=lambda g: -_severity_rank(g["severity"]))
     return {
@@ -146,10 +165,12 @@ def gaps_for_cve(cve_id: str) -> dict:
 
 
 def _gap_severity(cap: str, step: dict) -> str:
-    high_caps = {"RCE","AUTH_BYPASS","INTERNAL_HTTP","DATA_EXFIL","PRIV_ESC"}
-    med_caps  = {"MITM_NET","DECRYPT_TLS","READ_FS","WRITE_FS","LATERAL_LAN"}
-    if cap in high_caps: return "HIGH"
-    if cap in med_caps:  return "MEDIUM"
+    high_caps = {"RCE", "AUTH_BYPASS", "INTERNAL_HTTP", "DATA_EXFIL", "PRIV_ESC"}
+    med_caps = {"MITM_NET", "DECRYPT_TLS", "READ_FS", "WRITE_FS", "LATERAL_LAN"}
+    if cap in high_caps:
+        return "HIGH"
+    if cap in med_caps:
+        return "MEDIUM"
     return "LOW"
 
 
@@ -173,23 +194,32 @@ def replay_for_cve(cve_id: str) -> dict:
         for cap in step.get("gain", []):
             cs = _controls_for_capability(cap)
             if cs:
-                step_blocks.append({"capability": cap,
-                                    "control": cs[0],
-                                    "extra": len(cs) - 1})
+                step_blocks.append({"capability": cap, "control": cs[0], "extra": len(cs) - 1})
             else:
-                step_gaps.append({"capability": cap,
-                                  "recommended": [c.name for c in for_capability(cap)][:3]})
-        verdict = "BLOCKED" if step_blocks and not step_gaps else \
-                  "PARTIAL" if step_blocks and step_gaps else \
-                  "EXPLOITABLE" if step_gaps else "INFO"
-        timeline.append({
-            "n": i, "cve": step["cve"], "layer_from": step.get("layer_from"),
-            "layer_to": step["layer_to"],
-            "transition": step.get("transition"),
-            "verdict": verdict,
-            "blocks": step_blocks,
-            "gaps": step_gaps,
-        })
+                step_gaps.append(
+                    {"capability": cap, "recommended": [c.name for c in for_capability(cap)][:3]}
+                )
+        verdict = (
+            "BLOCKED"
+            if step_blocks and not step_gaps
+            else "PARTIAL"
+            if step_blocks and step_gaps
+            else "EXPLOITABLE"
+            if step_gaps
+            else "INFO"
+        )
+        timeline.append(
+            {
+                "n": i,
+                "cve": step["cve"],
+                "layer_from": step.get("layer_from"),
+                "layer_to": step["layer_to"],
+                "transition": step.get("transition"),
+                "verdict": verdict,
+                "blocks": step_blocks,
+                "gaps": step_gaps,
+            }
+        )
     return {
         "cve": cve_id.upper(),
         "chain_score": chain["score"],
@@ -203,9 +233,13 @@ def _verdict_summary(timeline: list[dict]) -> dict:
     counts = {"BLOCKED": 0, "PARTIAL": 0, "EXPLOITABLE": 0, "INFO": 0}
     for s in timeline:
         counts[s["verdict"]] = counts.get(s["verdict"], 0) + 1
-    counts["overall"] = ("BLOCKED" if counts["EXPLOITABLE"] == 0 and counts["BLOCKED"] > 0
-                         else "PARTIAL" if counts["BLOCKED"] > 0
-                         else "EXPLOITABLE")
+    counts["overall"] = (
+        "BLOCKED"
+        if counts["EXPLOITABLE"] == 0 and counts["BLOCKED"] > 0
+        else "PARTIAL"
+        if counts["BLOCKED"] > 0
+        else "EXPLOITABLE"
+    )
     return counts
 
 
@@ -214,12 +248,15 @@ def _verdict_summary(timeline: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 def coverage_for_stack(purls: list[str]) -> dict:
     """Aggregate posture across every CVE affecting the given packages."""
-    rows = run_read("""
+    rows = run_read(
+        """
         MATCH (p:Package)<-[:AFFECTS]-(c:CVE)
         WHERE p.purl IN $purls
         RETURN c.id AS id, c.cvss_score AS cvss
         ORDER BY coalesce(c.cvss_score,0) DESC LIMIT 30
-    """, purls=purls)
+    """,
+        purls=purls,
+    )
     seeds = [r["id"] for r in rows]
     aggregate_gaps: dict[str, dict] = {}
     aggregate_blocks: dict[str, dict] = {}
@@ -234,13 +271,16 @@ def coverage_for_stack(purls: list[str]) -> dict:
             key = (blk["capability"], blk["step_layer"])
             existing = aggregate_blocks.setdefault(str(key), {**blk, "count": 0})
             existing["count"] += 1
-    gaps_sorted = sorted(aggregate_gaps.values(),
-                         key=lambda x: (-_severity_rank(x.get("severity","")), -x["count"]))
+    gaps_sorted = sorted(
+        aggregate_gaps.values(), key=lambda x: (-_severity_rank(x.get("severity", "")), -x["count"])
+    )
     return {
         "cve_seeds": seeds,
         "gaps": gaps_sorted[:25],
         "blocks": list(aggregate_blocks.values())[:25],
-        "summary": {"seeds": len(seeds),
-                    "distinct_gap_keys": len(aggregate_gaps),
-                    "distinct_block_keys": len(aggregate_blocks)},
+        "summary": {
+            "seeds": len(seeds),
+            "distinct_gap_keys": len(aggregate_gaps),
+            "distinct_block_keys": len(aggregate_blocks),
+        },
     }

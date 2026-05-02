@@ -15,14 +15,18 @@ Usage:
     python -m ingest.poc --batch CVE-2024-3094 CVE-2023-44487
     python -m ingest.poc --missing 50    # find PoCs for the 50 CVEs in DB without one
 """
+
 from __future__ import annotations
+
 import argparse
 import re
+
 from rich.progress import Progress
 
-from .common import http_client, attach_poc, console, polite_sleep
 from config import settings
 from engine.graph import session
+
+from .common import attach_poc, console, http_client, polite_sleep
 
 TRICKEST_RAW = "https://raw.githubusercontent.com/trickest/cve/main"
 NOMI_RAW = "https://raw.githubusercontent.com/nomi-sec/PoC-in-GitHub/master"
@@ -68,6 +72,7 @@ def from_nomi(cve_id: str) -> list[tuple[str, str]]:
     if not txt:
         return []
     import json
+
     try:
         data = json.loads(txt)
     except Exception:

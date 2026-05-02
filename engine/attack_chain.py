@@ -23,46 +23,49 @@ This is a heuristic, not a formal exploit chain prover - but it surfaces
 genuinely useful adversary thinking that vendors who don't think in OSI
 layers cannot produce.
 """
+
 from __future__ import annotations
+
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Iterable
 
 from .graph import run_read
-from .risk_scoring import RiskInput, score as nexus_score
+from .risk_scoring import RiskInput
+from .risk_scoring import score as nexus_score
 
 # ---------------------------------------------------------------------------
 # Capability model - what an attacker holds after exploiting a CVE class.
 # ---------------------------------------------------------------------------
 # Capabilities serve as the "currency" that gates each next step.
 CAPS = {
-    "RCE",                # remote code execution on the target
-    "LOCAL_CODE",         # local code on the host (post-RCE or LPE)
-    "LATERAL_LAN",        # reach other hosts on local network
-    "INTERNAL_HTTP",      # SSRF/proxy: reach internal HTTP services
-    "READ_FS",            # arbitrary file read
-    "WRITE_FS",           # arbitrary file write
-    "READ_MEM",           # read process memory (heartbleed-style)
-    "AUTH_BYPASS",        # log in as someone else / no auth
-    "PRIV_ESC",           # root / SYSTEM
-    "DECRYPT_TLS",        # break or strip TLS
-    "MITM_NET",           # sit on the wire (L2/L3)
-    "HW_ACCESS",          # physical / firmware
-    "MODEL_ACCESS",       # query / influence ML model
-    "DATA_EXFIL",         # sensitive data leakage
-    "PHI_DISCLOSURE",     # leakage of Protected Health Information specifically
+    "RCE",  # remote code execution on the target
+    "LOCAL_CODE",  # local code on the host (post-RCE or LPE)
+    "LATERAL_LAN",  # reach other hosts on local network
+    "INTERNAL_HTTP",  # SSRF/proxy: reach internal HTTP services
+    "READ_FS",  # arbitrary file read
+    "WRITE_FS",  # arbitrary file write
+    "READ_MEM",  # read process memory (heartbleed-style)
+    "AUTH_BYPASS",  # log in as someone else / no auth
+    "PRIV_ESC",  # root / SYSTEM
+    "DECRYPT_TLS",  # break or strip TLS
+    "MITM_NET",  # sit on the wire (L2/L3)
+    "HW_ACCESS",  # physical / firmware
+    "MODEL_ACCESS",  # query / influence ML model
+    "DATA_EXFIL",  # sensitive data leakage
+    "PHI_DISCLOSURE",  # leakage of Protected Health Information specifically
 }
 
 # CWE id -> {gain capabilities, requires capabilities}
 CWE_CAPS: dict[str, dict[str, set[str]]] = {
     # --- Application (L7) ---
-    "CWE-78":  {"gain": {"RCE", "LOCAL_CODE"}, "requires": set()},
-    "CWE-77":  {"gain": {"RCE", "LOCAL_CODE"}, "requires": set()},
-    "CWE-94":  {"gain": {"RCE", "LOCAL_CODE"}, "requires": set()},
-    "CWE-89":  {"gain": {"DATA_EXFIL", "AUTH_BYPASS"}, "requires": set()},
-    "CWE-79":  {"gain": {"AUTH_BYPASS", "DATA_EXFIL"}, "requires": set()},  # via cookie theft
+    "CWE-78": {"gain": {"RCE", "LOCAL_CODE"}, "requires": set()},
+    "CWE-77": {"gain": {"RCE", "LOCAL_CODE"}, "requires": set()},
+    "CWE-94": {"gain": {"RCE", "LOCAL_CODE"}, "requires": set()},
+    "CWE-89": {"gain": {"DATA_EXFIL", "AUTH_BYPASS"}, "requires": set()},
+    "CWE-79": {"gain": {"AUTH_BYPASS", "DATA_EXFIL"}, "requires": set()},  # via cookie theft
     "CWE-352": {"gain": {"AUTH_BYPASS"}, "requires": {"INTERNAL_HTTP"}},
     "CWE-918": {"gain": {"INTERNAL_HTTP", "DATA_EXFIL"}, "requires": set()},
-    "CWE-22":  {"gain": {"READ_FS"}, "requires": set()},
+    "CWE-22": {"gain": {"READ_FS"}, "requires": set()},
     "CWE-434": {"gain": {"WRITE_FS", "RCE"}, "requires": set()},
     "CWE-787": {"gain": {"RCE", "LOCAL_CODE"}, "requires": set()},
     "CWE-125": {"gain": {"READ_MEM", "DATA_EXFIL"}, "requires": set()},
@@ -73,7 +76,6 @@ CWE_CAPS: dict[str, dict[str, set[str]]] = {
     "CWE-639": {"gain": {"AUTH_BYPASS", "DATA_EXFIL"}, "requires": set()},
     "CWE-862": {"gain": {"AUTH_BYPASS", "DATA_EXFIL"}, "requires": set()},
     "CWE-863": {"gain": {"AUTH_BYPASS", "PRIV_ESC"}, "requires": set()},
-
     # --- Presentation (L6) ---
     "CWE-502": {"gain": {"RCE"}, "requires": set()},
     "CWE-611": {"gain": {"READ_FS", "INTERNAL_HTTP", "DATA_EXFIL"}, "requires": set()},
@@ -81,20 +83,16 @@ CWE_CAPS: dict[str, dict[str, set[str]]] = {
     "CWE-327": {"gain": {"DECRYPT_TLS"}, "requires": {"MITM_NET"}},
     "CWE-295": {"gain": {"DECRYPT_TLS"}, "requires": {"MITM_NET"}},
     "CWE-347": {"gain": {"AUTH_BYPASS"}, "requires": set()},
-
     # --- Session (L5) ---
     "CWE-384": {"gain": {"AUTH_BYPASS"}, "requires": set()},
     "CWE-287": {"gain": {"AUTH_BYPASS"}, "requires": set()},
     "CWE-288": {"gain": {"AUTH_BYPASS"}, "requires": set()},
-
     # --- Transport / Network (L3-L4) ---
     "CWE-300": {"gain": {"MITM_NET"}, "requires": {"LATERAL_LAN"}},
     "CWE-941": {"gain": {"MITM_NET"}, "requires": set()},
     "CWE-441": {"gain": {"INTERNAL_HTTP"}, "requires": set()},
-
     # --- Data Link (L2) ---
     "CWE-290": {"gain": {"AUTH_BYPASS", "MITM_NET"}, "requires": {"LATERAL_LAN"}},
-
     # --- Physical (L1) ---
     "CWE-1300": {"gain": {"DECRYPT_TLS", "READ_MEM"}, "requires": {"HW_ACCESS"}},
     "CWE-1255": {"gain": {"DECRYPT_TLS"}, "requires": {"HW_ACCESS"}},
@@ -109,15 +107,15 @@ LAYER_REACH = {
     4: {4, 5, 7},
     5: {5, 7},
     6: {5, 6, 7},
-    7: {1, 3, 5, 6, 7},   # RCE = god mode, can pivot widely if positioned
+    7: {1, 3, 5, 6, 7},  # RCE = god mode, can pivot widely if positioned
 }
 
 # Initial attacker capability sets by entry vector
 ENTRY_CAPS = {
-    "internet": set(),                       # blind external attacker
-    "lan":      {"LATERAL_LAN", "MITM_NET"}, # attacker on same LAN
-    "physical": {"HW_ACCESS", "LATERAL_LAN"}, # has device in hand
-    "insider":  {"LOCAL_CODE", "LATERAL_LAN", "AUTH_BYPASS"},
+    "internet": set(),  # blind external attacker
+    "lan": {"LATERAL_LAN", "MITM_NET"},  # attacker on same LAN
+    "physical": {"HW_ACCESS", "LATERAL_LAN"},  # has device in hand
+    "insider": {"LOCAL_CODE", "LATERAL_LAN", "AUTH_BYPASS"},
 }
 
 
@@ -146,6 +144,7 @@ class CveSnapshot:
         if {"DATA_EXFIL", "READ_FS", "READ_MEM"} & out:
             try:
                 from .healthcare import cve_handles_phi
+
                 if cve_handles_phi(self.id):
                     out.add("PHI_DISCLOSURE")
             except Exception:
@@ -165,20 +164,22 @@ class CveSnapshot:
 
     @property
     def risk(self) -> dict:
-        return nexus_score(RiskInput(
-            cvss_score=self.cvss_score,
-            cwe_ids=self.cwe_ids,
-            osi_layers=self.osi_layers,
-            poc_count=self.poc_count,
-            package_count=self.package_count,
-            published=self.published,
-        )).to_dict()
+        return nexus_score(
+            RiskInput(
+                cvss_score=self.cvss_score,
+                cwe_ids=self.cwe_ids,
+                osi_layers=self.osi_layers,
+                poc_count=self.poc_count,
+                package_count=self.package_count,
+                published=self.published,
+            )
+        ).to_dict()
 
 
 @dataclass
 class ChainStep:
     cve: CveSnapshot
-    transition: str          # human-readable description of pivot
+    transition: str  # human-readable description of pivot
     layer_from: int | None
     layer_to: int
 
@@ -239,17 +240,24 @@ def _fetch(cve_id: str) -> CveSnapshot | None:
         return None
     r = rows[0]
     return CveSnapshot(
-        id=r["id"], description=r["description"] or "",
-        cvss_score=r["cvss_score"], severity=r["severity"],
+        id=r["id"],
+        description=r["description"] or "",
+        cvss_score=r["cvss_score"],
+        severity=r["severity"],
         cwe_ids=[c for c in r["cwes"] if c],
         osi_layers=sorted([l for l in r["layers"] if l]),
-        package_count=r["pkg_count"], poc_count=r["poc_count"],
+        package_count=r["pkg_count"],
+        poc_count=r["poc_count"],
         published=r["published"],
     )
 
 
-def _candidate_cves(reachable_layers: Iterable[int], shared_packages: list[str],
-                    exclude_ids: list[str], limit: int = 60) -> list[CveSnapshot]:
+def _candidate_cves(
+    reachable_layers: Iterable[int],
+    shared_packages: list[str],
+    exclude_ids: list[str],
+    limit: int = 60,
+) -> list[CveSnapshot]:
     """Find CVEs the attacker can plausibly reach next."""
     cypher = """
     MATCH (c:CVE)
@@ -272,27 +280,39 @@ def _candidate_cves(reachable_layers: Iterable[int], shared_packages: list[str],
     ORDER BY coalesce(c.cvss_score, 0) DESC
     LIMIT $limit
     """
-    rows = run_read(cypher, exclude=list(exclude_ids),
-                    layers=list(reachable_layers), pkgs=shared_packages,
-                    limit=limit)
+    rows = run_read(
+        cypher,
+        exclude=list(exclude_ids),
+        layers=list(reachable_layers),
+        pkgs=shared_packages,
+        limit=limit,
+    )
     out: list[CveSnapshot] = []
     for r in rows:
-        out.append(CveSnapshot(
-            id=r["id"], description=r["description"] or "",
-            cvss_score=r["cvss_score"], severity=r["severity"],
-            cwe_ids=[c for c in r["cwes"] if c],
-            osi_layers=sorted([l for l in r["layers"] if l]),
-            package_count=r["pkg_count"], poc_count=r["poc_count"],
-            published=r["published"],
-        ))
+        out.append(
+            CveSnapshot(
+                id=r["id"],
+                description=r["description"] or "",
+                cvss_score=r["cvss_score"],
+                severity=r["severity"],
+                cwe_ids=[c for c in r["cwes"] if c],
+                osi_layers=sorted([l for l in r["layers"] if l]),
+                package_count=r["pkg_count"],
+                poc_count=r["poc_count"],
+                published=r["published"],
+            )
+        )
     return out
 
 
 def _packages_for(cve_id: str) -> list[str]:
-    rows = run_read("""
+    rows = run_read(
+        """
         MATCH (c:CVE {id: $id})-[:AFFECTS]->(p:Package)
         RETURN collect(p.purl) AS purls
-    """, id=cve_id)
+    """,
+        id=cve_id,
+    )
     return rows[0]["purls"] if rows else []
 
 
@@ -360,8 +380,10 @@ def build_chain(
 
     # Seed step
     seed_step = ChainStep(
-        cve=seed, transition=f"Initial foothold via {seed.id} (L{seed.primary_layer})",
-        layer_from=None, layer_to=seed.primary_layer,
+        cve=seed,
+        transition=f"Initial foothold via {seed.id} (L{seed.primary_layer})",
+        layer_from=None,
+        layer_to=seed.primary_layer,
     )
     initial_chain = AttackChain(
         steps=[seed_step],
@@ -384,10 +406,18 @@ def build_chain(
     return [c.to_dict() for c in ranked[:5]]
 
 
-def _describe_transition(from_layer: int | None, to_layer: int,
-                         cve: CveSnapshot, same_pkg: bool) -> str:
-    layer_names = {1:"Physical",2:"Data Link",3:"Network",4:"Transport",
-                   5:"Session",6:"Presentation",7:"Application"}
+def _describe_transition(
+    from_layer: int | None, to_layer: int, cve: CveSnapshot, same_pkg: bool
+) -> str:
+    layer_names = {
+        1: "Physical",
+        2: "Data Link",
+        3: "Network",
+        4: "Transport",
+        5: "Session",
+        6: "Presentation",
+        7: "Application",
+    }
     if from_layer is None:
         return f"Foothold @ L{to_layer} {layer_names[to_layer]} via {cve.id}"
     pivot = "lateral via shared component" if same_pkg else f"pivot L{from_layer}→L{to_layer}"
@@ -398,15 +428,19 @@ def _describe_transition(from_layer: int | None, to_layer: int,
 # ---------------------------------------------------------------------------
 # Convenience: chains for a stack description (set of packages)
 # ---------------------------------------------------------------------------
-def chains_for_packages(purls: list[str], *, entry: str = "internet",
-                        per_seed: int = 2) -> list[dict]:
+def chains_for_packages(
+    purls: list[str], *, entry: str = "internet", per_seed: int = 2
+) -> list[dict]:
     """Find attack chains starting from CVEs affecting the given packages."""
-    rows = run_read("""
+    rows = run_read(
+        """
         MATCH (p:Package)<-[:AFFECTS]-(c:CVE)
         WHERE p.purl IN $purls
         RETURN c.id AS id, c.cvss_score AS cvss
         ORDER BY coalesce(c.cvss_score, 0) DESC LIMIT 25
-    """, purls=purls)
+    """,
+        purls=purls,
+    )
     out: list[dict] = []
     for r in rows:
         out.extend(build_chain(r["id"], entry=entry, max_depth=4)[:per_seed])
