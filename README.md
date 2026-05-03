@@ -562,6 +562,126 @@ Or click **Clinical AI → Model Card** in the top nav.
 
 ---
 
+## Asset Inventory (third-party application surface)
+
+Most CVE tools track *code dependencies*. NikruvX additionally tracks **deployed
+software** — the desktop binaries, browser extensions, IDE plugins, and MCP
+servers your team actually runs — and scores each one for trust. Almost no
+existing tool combines these.
+
+Click **Inventory** in the top nav, then **Scan this host** to walk every
+supported source on your machine in ~30 seconds:
+
+| Category | Scanner reads from |
+|---|---|
+| `desktop_binary` | Windows: `winget list` + `scoop list`. macOS: `brew` + `/Applications/*.app` plist parsing. Linux: `dpkg -l` / `pacman -Q` / `rpm -qa`. |
+| `browser_ext` | Chrome / Edge / Brave / Vivaldi / Opera profile dirs + Firefox `extensions.json` (full permissions list per extension). |
+| `ide_ext` | VS Code, VS Code Insiders, Cursor, Windsurf, VSCodium extensions + JetBrains plugin descriptors. |
+| `mcp_server` | Claude Desktop, Cursor, Claude Code, Continue.dev, Zed MCP configs. **Env-var values are redacted to keys-only — secrets never enter the graph.** |
+
+Each result becomes an `Application` node with:
+
+- **Provenance** (first-party / third-party / unknown)
+- **Trust score** 0–100, banded TRUSTED / OK / CAUTION / RISKY / DANGEROUS
+- **Permissions** with high-risk count surfaced
+- **CVE links** computed by cross-referencing with the rest of the graph
+- **OpenSSF Scorecard** (when available, via the **Enrich** button)
+
+The hero stats split your inventory **first-party vs third-party** so the
+SOC sees instantly which surface dominates their CVE exposure.
+
+Endpoints: `POST /api/inventory/scan`, `POST /api/inventory/enrich`, `GET /api/inventory`,
+`GET /api/inventory/{id}`, `GET /api/inventory/stats/provenance`.
+
+---
+
+## Supply Chain Risk Scanner
+
+For any package name or GitHub URL, get a graded risk report combining live
+registry metadata, malicious-feed cross-reference, and an 8-algorithm
+typosquat engine.
+
+Click **Supply Chain** in the top nav. Pick an ecosystem, type a package
+name, hit *Scan*. Or paste a GitHub URL.
+
+### 8-algorithm typosquat detection
+
+| Method | Catches |
+|---|---|
+| `LEVENSHTEIN` | 1–3 character edits, weighted by base name length |
+| `HOMOGLYPH` | `1↔l`, `0↔o`, `5↔s`, `rn↔m`, `vv↔w`, `cl↔d`, `nn↔m`, `ii↔u` |
+| `UNICODE_CONFUSABLE` | Cyrillic / Greek letters that look identical to Latin |
+| `HYPHEN_VARIANT` | Same characters with different separators (`lo-dash` vs `lodash`) |
+| `AFFIX_ATTACK` | Popular name + adversarial prefix (`true-axios`) or suffix (`axios-cli`) |
+| `VOWEL_TRICK` | Vowel removed (`expres`), doubled (`expresss`), or substituted |
+| `COMBOSQUAT` | Two real names glued together to look legitimate (`express-redux`) |
+| `EXACT` | Filtered out — name *is* the popular one, no flag |
+
+Bundled top-N popular package fixtures live at `data/popular_packages/`
+(npm 306, PyPI 329, RubyGems 153, crates.io 146, Go 122, Maven 121).
+
+### Live refresh script
+
+Replace fixtures with fresh top-N from each registry:
+
+```bash
+python scripts/refresh_popular_packages.py            # all ecosystems
+python scripts/refresh_popular_packages.py --eco pypi --top 5000
+```
+
+Sources: PyPI uses [hugovk's mirror](https://hugovk.github.io/top-pypi-packages/),
+npm uses [anvaka's npmrank](https://anvaka.github.io/npmrank/), crates.io uses
+its native downloads-sorted API. RubyGems / Go / Maven stay hand-maintained.
+
+### Historical incident memory
+
+Even after a hijacked version is yanked from the registry, NikruvX
+*remembers*. The `data/historical_incidents.json` fixture documents 14
+public compromise events including:
+
+- npm `event-stream` (2018), `ua-parser-js` (2021), `coa` (2021), `rc` (2021),
+  `colors` / `faker` (2022), `node-ipc` (2022), `@ctrl/tinycolor` (2024)
+- PyPI `ctx` / `phpass` (2022 domain takeover campaign)
+- Linux `xz-utils` (CVE-2024-3094, "Jia Tan" backdoor)
+
+Any package matching a historical entry gets downgraded to at least CAUTION
+with the full incident context (date, attack type, advisory link) shown in
+the report.
+
+Endpoints: `GET /api/supply-chain/scan-package`, `GET /api/supply-chain/scan-github`,
+`POST /api/supply-chain/scan-inventory`.
+
+---
+
+## Auto-fetched Threat Feeds
+
+The API spawns a background thread on startup that pulls and indexes
+malicious-package feeds — no manual refresh required.
+
+Sources currently wired in:
+
+| Feed | Use | Refresh |
+|---|---|---|
+| **OSSF malicious-packages** | github.com/ossf/malicious-packages → mirrored under OSV `MAL-*` advisory IDs. ~50 000 entries. | one git-tree call |
+| **GHSA malware advisories** | `/advisories?type=malware` GitHub-curated feed | 10 paginated calls |
+| **PyPA advisory-database** | github.com/pypa/advisory-database — *general advisories, not malicious-specific* | one git-tree call |
+| **Socket.dev** *(optional)* | Real-time newly-published malicious detection. Set `SOCKET_API_KEY` in `.env` to enable. | per-package |
+
+The orchestrator distinguishes **malicious feeds** (`OSSF` + `GHSA-malware`)
+from **general advisory feeds** (PyPA) — only the former count toward
+`is-this-malicious` decisions, so `lodash` / `requests` / etc. don't get
+false-positive flagged.
+
+Caches live at `data/feeds/<source>.json` and are gitignored. On API
+startup, whatever is already cached loads instantly into memory; the live
+refresh runs in parallel and rebuilds the index atomically. Set
+`GITHUB_TOKEN` in `.env` to raise the GitHub API rate limit from 60 → 5 000
+per hour.
+
+Endpoints: `GET /api/threat-feeds/status`, `POST /api/threat-feeds/refresh`.
+
+---
+
 ## Extending
 
 - **More ecosystems**: OSV.dev already covers Hex, NuGet, Pub, SwiftURL, etc.

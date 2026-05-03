@@ -1,0 +1,136 @@
+{
+  "_doc": [
+    "Curated list of packages with publicly documented supply-chain compromise events.",
+    "Even after the malicious version is cleaned up, this list keeps the institutional memory.",
+    "Each entry: package + ecosystem + incident date + brief description + reference URL.",
+    "Sources: GHSA, Snyk advisories, Sonatype reports, npm security blog, PyPI advisories."
+  ],
+  "incidents": [
+    {
+      "ecosystem": "npm", "name": "event-stream",
+      "version_affected": "3.3.6",
+      "date": "2018-11-26",
+      "type": "maintainer_takeover",
+      "description": "New maintainer added the malicious dependency 'flatmap-stream' which targeted Bitcoin wallets in Copay app",
+      "advisory": "GHSA-cph5-m8f7-6c5x",
+      "url": "https://github.com/advisories/GHSA-cph5-m8f7-6c5x"
+    },
+    {
+      "ecosystem": "npm", "name": "flatmap-stream",
+      "version_affected": "0.1.1",
+      "date": "2018-11-26",
+      "type": "malicious_publish",
+      "description": "Created specifically to be added as a malicious dependency to event-stream; stole Bitcoin wallets",
+      "advisory": "GHSA-mh6f-8j2x-4483",
+      "url": "https://github.com/advisories/GHSA-mh6f-8j2x-4483"
+    },
+    {
+      "ecosystem": "npm", "name": "ua-parser-js",
+      "version_affected": "0.7.29 / 0.8.0 / 1.0.0",
+      "date": "2021-10-22",
+      "type": "account_compromise",
+      "description": "Maintainer's npm account was hijacked; cryptominer + password stealer added",
+      "advisory": "CVE-2021-43139 / GHSA-pjwm-rvh2-c87w",
+      "url": "https://github.com/advisories/GHSA-pjwm-rvh2-c87w"
+    },
+    {
+      "ecosystem": "npm", "name": "coa",
+      "version_affected": "2.0.3 / 2.0.4 / 2.1.1+",
+      "date": "2021-11-04",
+      "type": "account_compromise",
+      "description": "Maintainer's account hijacked; identical malware to ua-parser-js incident",
+      "advisory": "GHSA-73qr-pfmq-6rp8",
+      "url": "https://github.com/advisories/GHSA-73qr-pfmq-6rp8"
+    },
+    {
+      "ecosystem": "npm", "name": "rc",
+      "version_affected": "1.2.9 / 1.3.9 / 2.3.9",
+      "date": "2021-11-12",
+      "type": "account_compromise",
+      "description": "Maintainer's npm account hijacked, similar payload to ua-parser-js",
+      "advisory": "GHSA-g2q5-5433-rhrf",
+      "url": "https://github.com/advisories/GHSA-g2q5-5433-rhrf"
+    },
+    {
+      "ecosystem": "npm", "name": "colors",
+      "version_affected": "1.4.1 / 1.4.2",
+      "date": "2022-01-08",
+      "type": "author_sabotage",
+      "description": "Author intentionally introduced an infinite loop ('protestware'); broke many builds",
+      "advisory": "CVE-2022-23413",
+      "url": "https://github.com/advisories/GHSA-9w7p-rh76-5p7g"
+    },
+    {
+      "ecosystem": "npm", "name": "faker",
+      "version_affected": "6.6.6",
+      "date": "2022-01-04",
+      "type": "author_sabotage",
+      "description": "Author wiped the package and added intentional 'protestware' content",
+      "advisory": "GHSA-vx9f-3pq7-pvff",
+      "url": "https://github.com/advisories/GHSA-vx9f-3pq7-pvff"
+    },
+    {
+      "ecosystem": "npm", "name": "node-ipc",
+      "version_affected": "10.1.1 / 10.1.2 / 11.0.0",
+      "date": "2022-03-15",
+      "type": "author_sabotage",
+      "description": "Author introduced code that wiped files on systems geolocated to Russia/Belarus",
+      "advisory": "CVE-2022-23812 / GHSA-97m3-w2cp-4xx6",
+      "url": "https://github.com/advisories/GHSA-97m3-w2cp-4xx6"
+    },
+    {
+      "ecosystem": "npm", "name": "@ctrl/tinycolor",
+      "version_affected": "4.1.1 / 4.1.2",
+      "date": "2024-09-18",
+      "type": "account_compromise",
+      "description": "Phishing of the maintainer's npm account; malicious crypto-stealer payload added (Shai-Hulud worm)",
+      "advisory": "GHSA-pmxc-h89j-cm65",
+      "url": "https://github.com/advisories/GHSA-pmxc-h89j-cm65"
+    },
+    {
+      "ecosystem": "PyPI", "name": "ctx",
+      "version_affected": "0.2.2 / 0.2.3 / 0.2.4 / 0.2.5 / 0.2.6",
+      "date": "2022-05-14",
+      "type": "domain_takeover",
+      "description": "Original maintainer's domain expired; attacker re-registered, took over PyPI account, added credential exfil",
+      "advisory": "OSV: PYSEC-2022-211",
+      "url": "https://osv.dev/vulnerability/PYSEC-2022-211"
+    },
+    {
+      "ecosystem": "PyPI", "name": "phpass",
+      "version_affected": "all",
+      "date": "2022-05-14",
+      "type": "domain_takeover",
+      "description": "Same campaign as ctx — domain takeover led to malicious upload with credential exfil",
+      "advisory": "OSV: PYSEC-2022-212",
+      "url": "https://osv.dev/vulnerability/PYSEC-2022-212"
+    },
+    {
+      "ecosystem": "PyPI", "name": "request",
+      "version_affected": "all (this is a typosquat package; 'requests' is the legit one)",
+      "date": "various",
+      "type": "typosquat",
+      "description": "Typosquat of 'requests' - any version is suspicious; never publish a project with this dep name",
+      "advisory": "TYPO",
+      "url": "https://pypi.org/project/requests/"
+    },
+    {
+      "ecosystem": "PyPI", "name": "colourama",
+      "version_affected": "all",
+      "date": "2017-12-04",
+      "type": "typosquat",
+      "description": "Typosquat of 'colorama' - canonical PyPI typosquat case study",
+      "advisory": "TYPO",
+      "url": "https://snyk.io/blog/typosquatting-attacks/"
+    },
+    {
+      "ecosystem": "Linux", "name": "xz-utils",
+      "version_affected": "5.6.0 / 5.6.1",
+      "date": "2024-03-29",
+      "type": "long_term_infiltration",
+      "description": "Two-year campaign by 'Jia Tan' to gain maintainer access and plant a backdoor enabling SSH RCE on systemd-using Linux systems",
+      "advisory": "CVE-2024-3094",
+      "url": "https://nvd.nist.gov/vuln/detail/CVE-2024-3094"
+    }
+  ]
+}

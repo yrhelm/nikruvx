@@ -11,12 +11,9 @@ Curation criteria: package is *purposed* for handling PHI/clinical data, not
 generic JSON/XML libs. We're conservative on purpose to keep false positives
 down.
 """
-
 from __future__ import annotations
-
 from rich.console import Console
-
-from .graph import run_read, session
+from .graph import session, run_read
 
 console = Console()
 
@@ -24,67 +21,78 @@ console = Console()
 # means startswith.
 PHI_PACKAGES: list[tuple[str, str, str]] = [
     # ----- HL7v2 / HL7 messaging -----
-    ("PyPI", "hl7", "HL7v2 parser"),
-    ("PyPI", "hl7apy", "HL7v2 toolkit"),
-    ("npm", "hl7-standard", "HL7v2 parser"),
-    ("npm", "node-hl7-client", "HL7 MLLP client"),
-    ("npm", "simple-hl7", "HL7v2 messages"),
-    ("Maven", "ca.uhn.hapi:hapi-base", "HAPI HL7 base"),
-    ("Maven", "ca.uhn.hapi:hapi-structures-v25", "HAPI HL7 v2.5"),
-    ("Maven", "ca.uhn.hapi:hapi-structures-v251", "HAPI HL7 v2.5.1"),
+    ("PyPI",     "hl7",         "HL7v2 parser"),
+    ("PyPI",     "hl7apy",      "HL7v2 toolkit"),
+    ("npm",      "hl7-standard", "HL7v2 parser"),
+    ("npm",      "node-hl7-client", "HL7 MLLP client"),
+    ("npm",      "simple-hl7",  "HL7v2 messages"),
+    ("Maven",    "ca.uhn.hapi:hapi-base", "HAPI HL7 base"),
+    ("Maven",    "ca.uhn.hapi:hapi-structures-v25", "HAPI HL7 v2.5"),
+    ("Maven",    "ca.uhn.hapi:hapi-structures-v251", "HAPI HL7 v2.5.1"),
+
     # ----- FHIR -----
-    ("PyPI", "fhir.resources", "FHIR resources"),
-    ("PyPI", "fhirclient", "FHIR client"),
-    ("PyPI", "fhirpy", "FHIR client async"),
-    ("npm", "fhir", "FHIR parser"),
-    ("npm", "fhir-kit-client", "FHIR REST client"),
-    ("npm", "@types/fhir", "FHIR TypeScript defs"),
-    ("Maven", "ca.uhn.hapi.fhir:hapi-fhir-base", "HAPI FHIR base"),
-    ("Maven", "ca.uhn.hapi.fhir:hapi-fhir-structures-r4", "HAPI FHIR R4"),
-    ("Maven", "ca.uhn.hapi.fhir:hapi-fhir-server", "HAPI FHIR server"),
-    ("Go", "github.com/google/fhir", "Google FHIR Go"),
+    ("PyPI",     "fhir.resources",   "FHIR resources"),
+    ("PyPI",     "fhirclient",       "FHIR client"),
+    ("PyPI",     "fhirpy",           "FHIR client async"),
+    ("npm",      "fhir",             "FHIR parser"),
+    ("npm",      "fhir-kit-client",  "FHIR REST client"),
+    ("npm",      "@types/fhir",      "FHIR TypeScript defs"),
+    ("Maven",    "ca.uhn.hapi.fhir:hapi-fhir-base",      "HAPI FHIR base"),
+    ("Maven",    "ca.uhn.hapi.fhir:hapi-fhir-structures-r4", "HAPI FHIR R4"),
+    ("Maven",    "ca.uhn.hapi.fhir:hapi-fhir-server",    "HAPI FHIR server"),
+    ("Go",       "github.com/google/fhir", "Google FHIR Go"),
+
     # ----- DICOM (medical imaging) -----
-    ("PyPI", "pydicom", "DICOM parser"),
-    ("PyPI", "dicomweb-client", "DICOMweb client"),
-    ("PyPI", "deid", "DICOM de-identification"),
-    ("PyPI", "highdicom", "DICOM SR/segmentations"),
-    ("npm", "dicom-parser", "DICOM parser"),
-    ("npm", "dcmjs", "DICOM JS"),
+    ("PyPI",     "pydicom",          "DICOM parser"),
+    ("PyPI",     "dicomweb-client",  "DICOMweb client"),
+    ("PyPI",     "deid",             "DICOM de-identification"),
+    ("PyPI",     "highdicom",        "DICOM SR/segmentations"),
+    ("npm",      "dicom-parser",     "DICOM parser"),
+    ("npm",      "dcmjs",            "DICOM JS"),
+
     # ----- NCPDP / pharmacy -----
-    ("PyPI", "ncpdp", "NCPDP D.0"),
-    ("Maven", "com.cerner:ccl", "Cerner CCL"),
+    ("PyPI",     "ncpdp",            "NCPDP D.0"),
+    ("Maven",    "com.cerner:ccl",   "Cerner CCL"),
+
     # ----- X12 (claims / 270/271/837) -----
-    ("PyPI", "pyx12", "X12 EDI parser"),
-    ("npm", "edi-x12", "X12 parser"),
+    ("PyPI",     "pyx12",            "X12 EDI parser"),
+    ("npm",      "edi-x12",          "X12 parser"),
+
     # ----- ICD / SNOMED / RxNorm / LOINC -----
-    ("PyPI", "icd10-cm", "ICD-10-CM lookup"),
-    ("PyPI", "snomed-graph", "SNOMED CT graph"),
-    ("PyPI", "loinc-tool", "LOINC tool"),
-    ("PyPI", "rxnorm-py", "RxNorm wrapper"),
+    ("PyPI",     "icd10-cm",         "ICD-10-CM lookup"),
+    ("PyPI",     "snomed-graph",     "SNOMED CT graph"),
+    ("PyPI",     "loinc-tool",       "LOINC tool"),
+    ("PyPI",     "rxnorm-py",        "RxNorm wrapper"),
+
     # ----- Clinical NLP -----
-    ("PyPI", "medspacy", "Clinical NLP spaCy"),
-    ("PyPI", "cnlp_transformers", "Clinical NLP transformers"),
-    ("PyPI", "scispacy", "Clinical/scientific spaCy"),
-    ("PyPI", "negex", "Clinical negation detection"),
+    ("PyPI",     "medspacy",         "Clinical NLP spaCy"),
+    ("PyPI",     "cnlp_transformers","Clinical NLP transformers"),
+    ("PyPI",     "scispacy",         "Clinical/scientific spaCy"),
+    ("PyPI",     "negex",            "Clinical negation detection"),
+
     # ----- EHR / vendor SDKs -----
-    ("PyPI", "epicchart-client", "Epic EHR client"),
-    ("npm", "@cerner/smart-on-fhir", "Cerner SMART-on-FHIR"),
-    ("npm", "fhirclient", "SMART-on-FHIR JS"),
-    ("PyPI", "smart-on-fhir", "SMART-on-FHIR Python"),
+    ("PyPI",     "epicchart-client", "Epic EHR client"),
+    ("npm",      "@cerner/smart-on-fhir", "Cerner SMART-on-FHIR"),
+    ("npm",      "fhirclient",       "SMART-on-FHIR JS"),
+    ("PyPI",     "smart-on-fhir",    "SMART-on-FHIR Python"),
+
     # ----- Biosignals / wearables / IoMT -----
-    ("PyPI", "wfdb", "WFDB ECG/PPG signal toolkit"),
-    ("PyPI", "mne", "MEG/EEG analysis"),
-    ("PyPI", "biopython", "BioPython - genomics + clinical"),
-    ("PyPI", "antropy", "EEG entropy analysis"),
+    ("PyPI",     "wfdb",             "WFDB ECG/PPG signal toolkit"),
+    ("PyPI",     "mne",              "MEG/EEG analysis"),
+    ("PyPI",     "biopython",        "BioPython - genomics + clinical"),
+    ("PyPI",     "antropy",          "EEG entropy analysis"),
+
     # ----- Healthcare AI / clinical LLM SDKs -----
-    ("PyPI", "clinical-trials-gov-sdk", "ClinicalTrials.gov"),
-    ("PyPI", "rad-fact", "Radiology factuality eval"),
-    ("PyPI", "med-mcp", "Medical MCP servers"),
+    ("PyPI",     "clinical-trials-gov-sdk", "ClinicalTrials.gov"),
+    ("PyPI",     "rad-fact",                "Radiology factuality eval"),
+    ("PyPI",     "med-mcp",                 "Medical MCP servers"),
+
     # ----- Patient ID / consent / audit -----
-    ("PyPI", "fhir-consent", "FHIR Consent helpers"),
-    ("PyPI", "audit-log", "audit log helpers (clinical)"),
+    ("PyPI",     "fhir-consent",     "FHIR Consent helpers"),
+    ("PyPI",     "audit-log",        "audit log helpers (clinical)"),
+
     # ----- HL7v3 / CDA -----
-    ("PyPI", "cda", "HL7 CDA"),
+    ("PyPI",     "cda",              "HL7 CDA"),
 ]
 
 
@@ -107,7 +115,7 @@ def _create_package_nodes() -> int:
 def tag_phi_packages() -> int:
     """Apply the :HandlesPHI label to every healthcare-package node in graph.
     Idempotent. Does NOT ingest OSV - call seed_phi_packages() for that."""
-    _create_package_nodes()  # make sure they exist
+    _create_package_nodes()   # make sure they exist
     purls = [f"pkg:{e.lower()}/{n}" for e, n, _ in PHI_PACKAGES]
     cypher = """
     UNWIND $purls AS purl
@@ -156,12 +164,8 @@ def seed_phi_packages(via_osv: bool = True, limit: int | None = None) -> dict:
     # Always create Package nodes so the tag has something to match.
     created = _create_package_nodes()
     tagged = tag_phi_packages()
-    return {
-        "created_packages": created,
-        "tagged": tagged,
-        "via_osv": via_osv,
-        "errors": errors[:10],
-    }
+    return {"created_packages": created, "tagged": tagged,
+            "via_osv": via_osv, "errors": errors[:10]}
 
 
 def list_phi_packages_in_graph() -> list[dict]:
@@ -181,14 +185,11 @@ def is_phi_package(purl: str) -> bool:
 
 
 def cve_handles_phi(cve_id: str) -> bool:
-    rows = run_read(
-        """
+    rows = run_read("""
         MATCH (c:CVE {id: $id})-[:AFFECTS]->(p:Package)
         WHERE p:HandlesPHI
         RETURN count(p) AS n
-    """,
-        id=cve_id.upper(),
-    )
+    """, id=cve_id.upper())
     return bool(rows and rows[0]["n"] > 0)
 
 

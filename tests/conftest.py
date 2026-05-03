@@ -7,9 +7,7 @@ We achieve that by stubbing out the `neo4j` driver and the `httpx` client
 in this conftest's top-level scope so it's effective for every test
 file.
 """
-
 from __future__ import annotations
-
 import sys
 import types
 from pathlib import Path
@@ -25,18 +23,10 @@ sys.path.insert(0, str(ROOT))
 # ---------------------------------------------------------------------------
 class _Anything:
     """Cheap stand-in object used to satisfy attribute / call lookups."""
-
-    def __getattr__(self, _):
-        return _Anything()
-
-    def __call__(self, *a, **kw):
-        return _Anything()
-
-    def __iter__(self):
-        return iter([])
-
-    def __bool__(self):
-        return False
+    def __getattr__(self, _): return _Anything()
+    def __call__(self, *a, **kw): return _Anything()
+    def __iter__(self): return iter([])
+    def __bool__(self): return False
 
 
 def _install_module(name: str, **attrs):
@@ -80,7 +70,7 @@ _install_module("rich.progress", Progress=_Anything)
 _install_module("dotenv", load_dotenv=lambda *a, **kw: None)
 
 
-import pytest
+import pytest  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -102,7 +92,6 @@ def fake_graph(monkeypatch):
         return None
 
     from engine import graph as g
-
     monkeypatch.setattr(g, "run_read", _run_read)
     monkeypatch.setattr(g, "run_write", _run_write)
     return state
@@ -120,8 +109,7 @@ def fake_ollama(monkeypatch):
         # Deterministic 8-d "embedding" so similarity stays stable per text
         return [hash(text + str(i)) % 1000 / 1000.0 for i in range(8)]
 
-    def _is_available():
-        return True
+    def _is_available(): return True
 
     monkeypatch.setattr(llm, "generate", _generate, raising=False)
     monkeypatch.setattr(llm, "embed", _embed, raising=False)

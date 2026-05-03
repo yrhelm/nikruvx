@@ -12,16 +12,12 @@ deserialization, prompt injection vulns) via RELATED_TO edges.
 This file ships with embedded data so the system works fully offline.
 You can re-run with --refresh to pull the live ATLAS YAML.
 """
-
 from __future__ import annotations
-
 import argparse
-
 from rich.progress import Progress
 
-from engine.graph import session
-
 from .common import console, http_client
+from engine.graph import session
 
 ATLAS_YAML_URL = "https://raw.githubusercontent.com/mitre-atlas/atlas-data/main/dist/ATLAS.yaml"
 
@@ -32,12 +28,10 @@ OWASP_LLM_TOP10 = [
     {
         "id": "LLM01:2025",
         "name": "Prompt Injection",
-        "description": (
-            "Crafted user input or external content overrides the model's "
-            "instructions, causing it to leak data, ignore guardrails, or "
-            "take unauthorized actions. Includes direct and indirect (RAG) "
-            "injection."
-        ),
+        "description": ("Crafted user input or external content overrides the model's "
+                        "instructions, causing it to leak data, ignore guardrails, or "
+                        "take unauthorized actions. Includes direct and indirect (RAG) "
+                        "injection."),
         "framework": "OWASP-LLM",
         "osi_layers": [6, 7],
         "related_cves": ["CVE-2024-5184", "CVE-2024-1234"],
@@ -53,10 +47,8 @@ OWASP_LLM_TOP10 = [
     {
         "id": "LLM03:2025",
         "name": "Supply Chain",
-        "description": (
-            "Compromised model weights, datasets, or third-party plugins "
-            "introduce backdoors or vulnerabilities."
-        ),
+        "description": ("Compromised model weights, datasets, or third-party plugins "
+                        "introduce backdoors or vulnerabilities."),
         "framework": "OWASP-LLM",
         "osi_layers": [7, 6],
         "related_cves": [],
@@ -72,10 +64,8 @@ OWASP_LLM_TOP10 = [
     {
         "id": "LLM05:2025",
         "name": "Improper Output Handling",
-        "description": (
-            "Downstream systems trust LLM output, leading to XSS, SSRF, RCE, "
-            "or SQLi when output is fed into shells, browsers, or DBs."
-        ),
+        "description": ("Downstream systems trust LLM output, leading to XSS, SSRF, RCE, "
+                        "or SQLi when output is fed into shells, browsers, or DBs."),
         "framework": "OWASP-LLM",
         "osi_layers": [7, 6],
         "related_cves": ["CVE-2023-29374"],
@@ -83,10 +73,8 @@ OWASP_LLM_TOP10 = [
     {
         "id": "LLM06:2025",
         "name": "Excessive Agency",
-        "description": (
-            "LLM-driven agents have too many tools/permissions; a manipulated "
-            "agent can wreak havoc."
-        ),
+        "description": ("LLM-driven agents have too many tools/permissions; a manipulated "
+                        "agent can wreak havoc."),
         "framework": "OWASP-LLM",
         "osi_layers": [7, 5],
         "related_cves": [],
@@ -102,10 +90,8 @@ OWASP_LLM_TOP10 = [
     {
         "id": "LLM08:2025",
         "name": "Vector and Embedding Weaknesses",
-        "description": (
-            "Embedding inversion, vector store poisoning, and cross-tenant "
-            "leakage in RAG pipelines."
-        ),
+        "description": ("Embedding inversion, vector store poisoning, and cross-tenant "
+                        "leakage in RAG pipelines."),
         "framework": "OWASP-LLM",
         "osi_layers": [7, 6],
         "related_cves": [],
@@ -133,76 +119,36 @@ OWASP_LLM_TOP10 = [
 # Full catalog is pulled when --refresh is passed.
 # ---------------------------------------------------------------------------
 ATLAS_CORE = [
-    {
-        "id": "AML.T0051",
-        "name": "LLM Prompt Injection",
-        "description": "Manipulate an LLM via crafted prompts to override behavior.",
-        "framework": "ATLAS",
-        "osi_layers": [6, 7],
-    },
-    {
-        "id": "AML.T0048",
-        "name": "External Harms",
-        "description": "Use LLM-driven agent to cause harm in connected systems.",
-        "framework": "ATLAS",
-        "osi_layers": [7],
-    },
-    {
-        "id": "AML.T0043",
-        "name": "Craft Adversarial Data",
-        "description": "Generate inputs that cause misclassification.",
-        "framework": "ATLAS",
-        "osi_layers": [7],
-    },
-    {
-        "id": "AML.T0020",
-        "name": "Poison Training Data",
-        "description": "Insert malicious samples into the training set.",
-        "framework": "ATLAS",
-        "osi_layers": [7],
-    },
-    {
-        "id": "AML.T0018",
-        "name": "Backdoor ML Model",
-        "description": "Plant trigger inputs that produce attacker-chosen behavior.",
-        "framework": "ATLAS",
-        "osi_layers": [7],
-    },
-    {
-        "id": "AML.T0024",
-        "name": "Exfiltration via ML Inference API",
-        "description": "Query model to extract weights, training data, or PII.",
-        "framework": "ATLAS",
-        "osi_layers": [7, 5],
-    },
-    {
-        "id": "AML.T0040",
-        "name": "ML Model Inference API Access",
-        "description": "Gain access to model API for downstream attacks.",
-        "framework": "ATLAS",
-        "osi_layers": [7, 5],
-    },
-    {
-        "id": "AML.T0010",
-        "name": "ML Supply Chain Compromise",
-        "description": "Tamper with model artifacts, datasets, or libraries upstream.",
-        "framework": "ATLAS",
-        "osi_layers": [7, 6],
-    },
-    {
-        "id": "AML.T0017",
-        "name": "Develop Capabilities: Adversarial ML Attacks",
-        "description": "Build evasion/extraction tools tailored to a target model.",
-        "framework": "ATLAS",
-        "osi_layers": [7],
-    },
-    {
-        "id": "AML.T0044",
-        "name": "Full ML Model Access",
-        "description": "Adversary gains white-box access enabling powerful attacks.",
-        "framework": "ATLAS",
-        "osi_layers": [7],
-    },
+    {"id": "AML.T0051", "name": "LLM Prompt Injection",
+     "description": "Manipulate an LLM via crafted prompts to override behavior.",
+     "framework": "ATLAS", "osi_layers": [6, 7]},
+    {"id": "AML.T0048", "name": "External Harms",
+     "description": "Use LLM-driven agent to cause harm in connected systems.",
+     "framework": "ATLAS", "osi_layers": [7]},
+    {"id": "AML.T0043", "name": "Craft Adversarial Data",
+     "description": "Generate inputs that cause misclassification.",
+     "framework": "ATLAS", "osi_layers": [7]},
+    {"id": "AML.T0020", "name": "Poison Training Data",
+     "description": "Insert malicious samples into the training set.",
+     "framework": "ATLAS", "osi_layers": [7]},
+    {"id": "AML.T0018", "name": "Backdoor ML Model",
+     "description": "Plant trigger inputs that produce attacker-chosen behavior.",
+     "framework": "ATLAS", "osi_layers": [7]},
+    {"id": "AML.T0024", "name": "Exfiltration via ML Inference API",
+     "description": "Query model to extract weights, training data, or PII.",
+     "framework": "ATLAS", "osi_layers": [7, 5]},
+    {"id": "AML.T0040", "name": "ML Model Inference API Access",
+     "description": "Gain access to model API for downstream attacks.",
+     "framework": "ATLAS", "osi_layers": [7, 5]},
+    {"id": "AML.T0010", "name": "ML Supply Chain Compromise",
+     "description": "Tamper with model artifacts, datasets, or libraries upstream.",
+     "framework": "ATLAS", "osi_layers": [7, 6]},
+    {"id": "AML.T0017", "name": "Develop Capabilities: Adversarial ML Attacks",
+     "description": "Build evasion/extraction tools tailored to a target model.",
+     "framework": "ATLAS", "osi_layers": [7]},
+    {"id": "AML.T0044", "name": "Full ML Model Access",
+     "description": "Adversary gains white-box access enabling powerful attacks.",
+     "framework": "ATLAS", "osi_layers": [7]},
 ]
 
 
@@ -221,15 +167,10 @@ def _upsert(record: dict) -> None:
         MERGE (a)-[:RELATED_TO]->(c)
     """
     with session() as s:
-        s.run(
-            cypher,
-            id=record["id"],
-            name=record["name"],
-            description=record["description"],
-            framework=record["framework"],
-            layers=record.get("osi_layers", []),
-            cves=record.get("related_cves", []),
-        )
+        s.run(cypher, id=record["id"], name=record["name"],
+              description=record["description"], framework=record["framework"],
+              layers=record.get("osi_layers", []),
+              cves=record.get("related_cves", []))
 
 
 def _load_atlas_live() -> list[dict]:
@@ -247,16 +188,14 @@ def _load_atlas_live() -> list[dict]:
     techs = []
     for matrix in data.get("matrices", []):
         for tech in matrix.get("techniques", []):
-            techs.append(
-                {
-                    "id": tech.get("id", ""),
-                    "name": tech.get("name", ""),
-                    "description": tech.get("description", "")[:1000],
-                    "framework": "ATLAS",
-                    "osi_layers": [7],  # almost all are app-layer
-                    "related_cves": [],
-                }
-            )
+            techs.append({
+                "id": tech.get("id", ""),
+                "name": tech.get("name", ""),
+                "description": tech.get("description", "")[:1000],
+                "framework": "ATLAS",
+                "osi_layers": [7],  # almost all are app-layer
+                "related_cves": [],
+            })
     return techs or ATLAS_CORE
 
 
@@ -273,9 +212,7 @@ def ingest(refresh: bool = False) -> int:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(
-        description="Ingest AI/ML vulnerabilities (ATLAS + OWASP LLM Top 10)"
-    )
+    p = argparse.ArgumentParser(description="Ingest AI/ML vulnerabilities (ATLAS + OWASP LLM Top 10)")
     p.add_argument("--refresh", action="store_true", help="Pull live MITRE ATLAS YAML")
     args = p.parse_args()
     ingest(args.refresh)

@@ -16,9 +16,7 @@ Steps performed:
 Tip: set NVD_API_KEY in .env to dramatically speed up step 2 (free, takes 1 min:
      https://nvd.nist.gov/developers/request-an-api-key).
 """
-
 from __future__ import annotations
-
 import sys
 import time
 from pathlib import Path
@@ -28,10 +26,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from rich.console import Console
-
-from config import settings
 from engine.graph import apply_schema
-from ingest import ai_threats, cwe, ghsa, nvd, osv, poc
+from ingest import nvd, cwe, osv, ghsa, ai_threats, poc
+from config import settings
 
 console = Console()
 # NVD rate limit: 5 req per 30s without a key, 50 per 30s with one.
@@ -39,21 +36,21 @@ NVD_PAUSE = 0.8 if settings.nvd_api_key else 6.5
 
 # A handful of high-impact, well-known CVEs to seed the graph.
 SEED_CVES = [
-    "CVE-2021-44228",  # Log4Shell
-    "CVE-2021-45046",  # Log4j follow-up
-    "CVE-2024-3094",  # xz backdoor
-    "CVE-2023-44487",  # HTTP/2 Rapid Reset
-    "CVE-2022-22965",  # Spring4Shell
-    "CVE-2017-5638",  # Struts2 (Equifax)
-    "CVE-2014-0160",  # Heartbleed
-    "CVE-2014-6271",  # Shellshock
-    "CVE-2019-0708",  # BlueKeep
-    "CVE-2020-1472",  # Zerologon
-    "CVE-2022-26134",  # Confluence OGNL
-    "CVE-2023-46604",  # ActiveMQ deserialization
-    "CVE-2023-29374",  # LangChain SQL injection (AI)
-    "CVE-2024-21626",  # runc container escape
-    "CVE-2023-50164",  # Struts file upload
+    "CVE-2021-44228",   # Log4Shell
+    "CVE-2021-45046",   # Log4j follow-up
+    "CVE-2024-3094",    # xz backdoor
+    "CVE-2023-44487",   # HTTP/2 Rapid Reset
+    "CVE-2022-22965",   # Spring4Shell
+    "CVE-2017-5638",    # Struts2 (Equifax)
+    "CVE-2014-0160",    # Heartbleed
+    "CVE-2014-6271",    # Shellshock
+    "CVE-2019-0708",    # BlueKeep
+    "CVE-2020-1472",    # Zerologon
+    "CVE-2022-26134",   # Confluence OGNL
+    "CVE-2023-46604",   # ActiveMQ deserialization
+    "CVE-2023-29374",   # LangChain SQL injection (AI)
+    "CVE-2024-21626",   # runc container escape
+    "CVE-2023-50164",   # Struts file upload
 ]
 
 

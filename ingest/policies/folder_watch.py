@@ -10,13 +10,11 @@ Usage:
 
 No external deps - uses os.stat polling so it works without `watchdog`.
 """
-
 from __future__ import annotations
-
 import argparse
+import os
 import time
 from pathlib import Path
-
 from rich.console import Console
 
 from . import parse_any, upsert_policies

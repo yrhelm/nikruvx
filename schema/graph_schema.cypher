@@ -83,9 +83,25 @@ CREATE FULLTEXT INDEX policy_search IF NOT EXISTS
 CREATE FULLTEXT INDEX control_search IF NOT EXISTS
   FOR (c:Control) ON EACH [c.id, c.title, c.action];
 
+// =====================================================================
+// ASSET INVENTORY EXTENSION (v1.2)
+// =====================================================================
+// Application = a deployed piece of software, distinct from a Package
+// (a code dependency). Provenance + category + trust drive risk view.
+// =====================================================================
+CREATE CONSTRAINT application_id IF NOT EXISTS
+  FOR (a:Application) REQUIRE a.id IS UNIQUE;
+
+CREATE INDEX application_provenance IF NOT EXISTS FOR (a:Application) ON (a.provenance);
+CREATE INDEX application_category   IF NOT EXISTS FOR (a:Application) ON (a.category);
+CREATE INDEX application_publisher  IF NOT EXISTS FOR (a:Application) ON (a.publisher);
+
+CREATE FULLTEXT INDEX application_search IF NOT EXISTS
+  FOR (a:Application) ON EACH [a.id, a.name, a.publisher];
+
 // ----- Schema documentation (as a single info node) -----
 MERGE (i:_NexusInfo {key: "schema"})
-SET i.version  = "1.1.0",
+SET i.version  = "1.2.0",
     i.created  = datetime(),
-    i.nodes    = ["CVE","CWE","OSILayer","Package","PackageVersion","PoC","AIThreat","Vendor","Product","Policy","Control"],
-    i.relations= ["CLASSIFIED_AS","MAPS_TO","AFFECTS","VERSION_OF","HAS_POC","CHILD_OF","RELATED_TO","AFFECTS_PRODUCT","MADE_BY","CONTAINS","MITIGATES","APPLIES_AT","GOVERNS"];
+    i.nodes    = ["CVE","CWE","OSILayer","Package","PackageVersion","PoC","AIThreat","Vendor","Product","Policy","Control","Application"],
+    i.relations= ["CLASSIFIED_AS","MAPS_TO","AFFECTS","VERSION_OF","HAS_POC","CHILD_OF","RELATED_TO","AFFECTS_PRODUCT","MADE_BY","CONTAINS","MITIGATES","APPLIES_AT","GOVERNS","USES_DEPENDENCY","REQUIRES_PERMISSION","DEPLOYED_AT","SUPPLIED_BY"];

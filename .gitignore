@@ -14,13 +14,16 @@
 secrets/
 
 # ---- Local Neo4j data (huge + machine-specific) ----
-data/
-!data/.gitkeep
+data/neo4j/
 neo4j/
 *.db
 *.dump
 *.transaction.db.*
 debug.log
+
+# ---- Threat-feed cache (regenerated every 6h by the API) ----
+data/feeds/*
+!data/feeds/.gitkeep
 
 # ---- Python ----
 __pycache__/

@@ -6,20 +6,16 @@ parent-child hierarchy, and maps each CWE to OSI layers.
 
 Source: https://cwe.mitre.org/data/xml/cwec_latest.xml.zip
 """
-
 from __future__ import annotations
-
 import argparse
 import io
-import xml.etree.ElementTree as ET
 import zipfile
-
+import xml.etree.ElementTree as ET
 from rich.progress import Progress
 
+from .common import http_client, console
 from engine.graph import session
 from engine.osi_classifier import CWE_TO_LAYERS
-
-from .common import console, http_client
 
 CWE_URL = "https://cwe.mitre.org/data/xml/cwec_latest.xml.zip"
 NS = {"c": "http://cwe.mitre.org/cwe-7"}
@@ -30,13 +26,11 @@ def _layers_for(cwe_id: str, name: str, description: str) -> list[int]:
         return CWE_TO_LAYERS[cwe_id]
     # Fall back to text classification using the CWE name + description
     from engine.osi_classifier import classify
-
     return [hit["layer"] for hit in classify(f"{name}. {description}", [cwe_id])]
 
 
-def _upsert(
-    cwe_id: str, name: str, description: str, abstraction: str, status: str, parents: list[str]
-) -> None:
+def _upsert(cwe_id: str, name: str, description: str, abstraction: str,
+            status: str, parents: list[str]) -> None:
     layers = _layers_for(cwe_id, name, description)
     cypher = """
     MERGE (w:CWE {id: $cwe_id})
@@ -53,16 +47,9 @@ def _upsert(
         MERGE (w)-[:MAPS_TO]->(l)
     """
     with session() as s:
-        s.run(
-            cypher,
-            cwe_id=cwe_id,
-            name=name,
-            description=description,
-            abstraction=abstraction,
-            status=status,
-            parents=parents,
-            layers=layers,
-        )
+        s.run(cypher, cwe_id=cwe_id, name=name, description=description,
+              abstraction=abstraction, status=status,
+              parents=parents, layers=layers)
 
 
 def ingest() -> int:

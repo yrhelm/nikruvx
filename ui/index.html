@@ -23,6 +23,8 @@
   </div>
   <nav class="modes">
     <button class="mode-btn active" data-mode="explore">Explore</button>
+    <button class="mode-btn" data-mode="inventory">Inventory</button>
+    <button class="mode-btn" data-mode="supplychain">Supply Chain</button>
     <button class="mode-btn" data-mode="sbom">SBOM Scan</button>
     <button class="mode-btn" data-mode="posture">Posture</button>
     <button class="mode-btn" data-mode="redteam">Red-Team</button>
@@ -148,6 +150,64 @@
         </div>
         <div id="gapsBox" style="margin-top:16px"></div>
       </div>
+    </div>
+  </section>
+
+  <section id="supplychainMode" class="mode-overlay" hidden>
+    <div class="mode-inner">
+      <h2>Supply Chain — <span class="muted">live risk scan for any package or GitHub repo</span></h2>
+
+      <div class="rt-row" style="grid-template-columns:auto 1fr auto">
+        <select id="scEco">
+          <option value="npm">npm</option>
+          <option value="pypi">PyPI</option>
+          <option value="rubygems">RubyGems</option>
+          <option value="crates.io">crates.io</option>
+          <option value="go">Go</option>
+          <option value="maven">Maven</option>
+        </select>
+        <input id="scPkg" placeholder="Package name (e.g. lodash, requests, log4j-core)" />
+        <button id="scPkgBtn">Scan package</button>
+      </div>
+      <div class="rt-row" style="grid-template-columns:1fr auto;margin-top:6px">
+        <input id="scGh" placeholder="GitHub URL (e.g. https://github.com/expressjs/express)" />
+        <button id="scGhBtn">Scan repo</button>
+      </div>
+      <div class="rt-row" style="grid-template-columns:auto;margin-top:6px">
+        <button id="scInvBtn" style="background:transparent;border:1px solid var(--accent);color:var(--accent)">Cross-check my inventory against malicious feed</button>
+      </div>
+
+      <div id="scStatus" class="muted" style="margin-top:8px"></div>
+      <div id="scResult" style="margin-top:18px"></div>
+    </div>
+  </section>
+
+  <section id="inventoryMode" class="mode-overlay" hidden>
+    <div class="mode-inner">
+      <h2>Asset Inventory — <span class="muted">first-party vs third-party application surface</span></h2>
+
+      <div class="rt-row" style="grid-template-columns:auto auto auto auto 1fr">
+        <button id="invScanBtn">Scan this host</button>
+        <button id="invEnrichBtn" style="background:transparent;border:1px solid var(--accent);color:var(--accent)">Enrich (Scorecard + GHSA)</button>
+        <select id="invProv">
+          <option value="">All provenance</option>
+          <option value="first_party">First-party only</option>
+          <option value="third_party">Third-party only</option>
+        </select>
+        <select id="invCat">
+          <option value="">All categories</option>
+          <option value="desktop_binary">Desktop binaries</option>
+          <option value="browser_ext">Browser extensions</option>
+          <option value="ide_ext">IDE extensions</option>
+          <option value="mcp_server">MCP servers</option>
+        </select>
+        <span id="invStatus" class="muted"></span>
+      </div>
+
+      <div id="invProvSplit" class="sbom-summary" style="margin-top:18px"></div>
+      <div id="invCatStats" style="margin-top:8px"></div>
+      <div class="section-h">Applications (sorted by trust score, lowest first)</div>
+      <div id="invList" class="muted">Click "Scan this host" to populate.</div>
     </div>
   </section>
 

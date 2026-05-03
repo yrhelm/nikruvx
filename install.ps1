@@ -120,9 +120,16 @@ foreach ($port in 7474, 7687, 8000) {
 # ---------- 4. Start Neo4j (skip api container so no restart-loop) ----------
 Step 5 8 "Starting Neo4j via docker compose"
 
-# Force-remove any old containers to avoid name conflicts
+# Force-remove any old containers to avoid name conflicts.
+# `docker rm -f` writes to stderr when the container doesn't exist, and
+# PowerShell's `2>$null` doesn't fully suppress native-cmd stderr -- so we
+# check existence first.
 foreach ($name in "nexus-neo4j", "nikruvx-neo4j", "nikruvx-api") {
-  & docker rm -f $name 2>$null | Out-Null
+  $present = (& docker ps -a --filter "name=^/$name`$" --format "{{.Names}}" 2>&1) -join ""
+  if ($present -eq $name) {
+    & docker rm -f $name 2>&1 | Out-Null
+    Ok "Removed stale container: $name"
+  }
 }
 
 & docker compose up -d neo4j

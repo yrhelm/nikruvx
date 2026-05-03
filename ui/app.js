@@ -35,14 +35,16 @@ function initModes() {
 }
 function switchMode(mode) {
   document.querySelectorAll(".mode-btn").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
-  ["sbomMode","redteamMode","kevMode","postureMode","hipaaMode","clinicalMode"].forEach(id => {
+  ["sbomMode","redteamMode","kevMode","postureMode","hipaaMode","clinicalMode","inventoryMode","supplychainMode"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.hidden = id !== `${mode}Mode`;
   });
-  if (mode === "kev")      refreshKev();
-  if (mode === "posture")  initPosture();
-  if (mode === "hipaa")    initHipaa();
-  if (mode === "clinical") initClinical();
+  if (mode === "kev")          refreshKev();
+  if (mode === "posture")      initPosture();
+  if (mode === "hipaa")        initHipaa();
+  if (mode === "clinical")     initClinical();
+  if (mode === "inventory")    initInventory();
+  if (mode === "supplychain")  initSupplyChain();
 }
 
 /* ---------- bootstrap ---------- */
@@ -513,6 +515,238 @@ async function runGap() {
   `;
 }
 
+/* ---------- Supply Chain mode ---------- */
+let _scInited = false;
+function initSupplyChain() {
+  if (_scInited) return; _scInited = true;
+  $("#scPkgBtn").addEventListener("click", scanPackage);
+  $("#scGhBtn").addEventListener("click", scanGithub);
+  $("#scInvBtn").addEventListener("click", scanInventoryMalicious);
+  $("#scPkg").addEventListener("keydown", e => { if (e.key === "Enter") scanPackage(); });
+  $("#scGh").addEventListener("keydown", e => { if (e.key === "Enter") scanGithub(); });
+}
+async function scanPackage() {
+  const eco = $("#scEco").value;
+  const name = $("#scPkg").value.trim();
+  if (!name) return;
+  $("#scStatus").textContent = `Scanning ${eco}/${name}…`;
+  $("#scResult").innerHTML = "";
+  try {
+    const r = await fetch(`/api/supply-chain/scan-package?eco=${encodeURIComponent(eco)}&name=${encodeURIComponent(name)}`).then(r => r.json());
+    renderSupplyChainResult(r);
+  } catch (e) {
+    $("#scStatus").textContent = "Scan failed: " + e.message;
+  } finally {
+    $("#scStatus").textContent = "";
+  }
+}
+async function scanGithub() {
+  const url = $("#scGh").value.trim();
+  if (!url) return;
+  $("#scStatus").textContent = `Scanning ${url}…`;
+  $("#scResult").innerHTML = "";
+  const r = await fetch(`/api/supply-chain/scan-github?url=${encodeURIComponent(url)}`).then(r => r.json());
+  renderSupplyChainResult(r);
+  $("#scStatus").textContent = "";
+}
+async function scanInventoryMalicious() {
+  $("#scStatus").textContent = "Cross-checking your inventory against malicious package feed…";
+  $("#scResult").innerHTML = "";
+  const r = await fetch("/api/supply-chain/scan-inventory", { method: "POST" }).then(r => r.json());
+  $("#scStatus").textContent = "";
+  if (!r.malicious_hits || !r.malicious_hits.length) {
+    $("#scResult").innerHTML = `<div class="block-card"><span class="cap">✓ Clean</span> · checked ${r.checked} package(s), 0 hits in malicious feed</div>`;
+    return;
+  }
+  $("#scResult").innerHTML = `
+    <div class="section-h">${r.malicious_hits.length} package(s) match malicious feed (out of ${r.checked} checked)</div>
+    ${r.malicious_hits.map(h => `<div class="gap-card HIGH"><span class="cap">${h.ecosystem}/${h.name}</span></div>`).join("")}
+  `;
+}
+function renderSupplyChainResult(r) {
+  if (r.error) {
+    $("#scResult").innerHTML = `<div class="muted">Error: ${r.error}</div>`;
+    return;
+  }
+  const band = r.band || "?";
+  const findings = (r.findings || []).map(f => `<li>${escapeHtml(f)}</li>`).join("");
+  const reasons = (r.reasons || []).map(f => `<li>${escapeHtml(f)}</li>`).join("");
+  let header;
+  if (r.ecosystem) {
+    header = `${r.ecosystem}/${r.name}${r.version ? ' @ ' + r.version : ''}`;
+  } else if (r.owner) {
+    header = `github.com/${r.owner}/${r.repo}`;
+  } else {
+    header = "Result";
+  }
+  const meta = r.metadata ? `
+    <div class="section-h">Metadata</div>
+    <div class="muted">
+      ${r.metadata.description ? escapeHtml(r.metadata.description) : ''}
+    </div>
+    <div class="cat-stats" style="margin-top:6px">
+      ${r.metadata.age_days != null ? `<span class="cat-chip">age ${r.metadata.age_days} days</span>` : ''}
+      ${r.metadata.download_count_30d != null ? `<span class="cat-chip">${r.metadata.download_count_30d.toLocaleString()} dl/mo</span>` : ''}
+      ${r.metadata.maintainer_count != null ? `<span class="cat-chip">${r.metadata.maintainer_count} maintainer(s)</span>` : ''}
+      ${r.metadata.license ? `<span class="cat-chip">${escapeHtml(String(r.metadata.license))}</span>` : '<span class="cat-chip" style="color:var(--accent-2)">no license</span>'}
+      ${r.metadata.repository_url ? `<span class="cat-chip"><a href="${escapeHtml(r.metadata.repository_url)}" target="_blank">repo</a></span>` : ''}
+    </div>` : '';
+  const ghMeta = r.owner ? `
+    <div class="section-h">Repo metadata</div>
+    <div class="cat-stats">
+      <span class="cat-chip">${(r.stars || 0).toLocaleString()} stars</span>
+      <span class="cat-chip">${(r.forks || 0).toLocaleString()} forks</span>
+      <span class="cat-chip">${r.open_issues || 0} open issues</span>
+      <span class="cat-chip">age ${r.age_days || 0} days</span>
+      <span class="cat-chip">last push ${r.last_push_days || 0} days ago</span>
+      ${r.license ? `<span class="cat-chip">${escapeHtml(r.license)}</span>` : '<span class="cat-chip" style="color:var(--accent-2)">no license</span>'}
+      ${r.archived ? '<span class="cat-chip" style="color:var(--accent-2)">archived</span>' : ''}
+    </div>` : '';
+  const ts = r.typosquat || {};
+  $("#scResult").innerHTML = `
+    <div class="risk-card">
+      <div><span class="risk-score">${(r.score ?? 0).toFixed(0)}</span><span class="muted"> / 100</span></div>
+      <div class="risk-band">SUPPLY-CHAIN TRUST · ${band}</div>
+      <div class="muted" style="margin-top:8px">${escapeHtml(header)}</div>
+      ${r.in_malicious_feed ? '<div class="kev-badge" style="margin-top:8px">⚠ MALICIOUS FEED MATCH</div>' : ''}
+      ${ts.distance_score >= 0.7 ? `<div class="kev-badge" style="margin-top:8px">⚠ TYPOSQUAT of ${escapeHtml(ts.closest_popular || '?')}</div>` : ''}
+    </div>
+    ${meta}${ghMeta}
+    ${findings ? `<div class="section-h">Findings</div><ul style="font-size:13px;color:#ffaaaa">${findings}</ul>` : ''}
+    ${reasons ? `<div class="section-h">Score components</div><ul class="muted" style="font-size:11px">${reasons}</ul>` : ''}
+  `;
+}
+
+/* ---------- Asset Inventory mode ---------- */
+let _invInited = false;
+function initInventory() {
+  if (!_invInited) {
+    _invInited = true;
+    $("#invScanBtn").addEventListener("click", scanInventory);
+    $("#invEnrichBtn").addEventListener("click", enrichInventory);
+    $("#invProv").addEventListener("change", refreshInventoryList);
+    $("#invCat").addEventListener("change", refreshInventoryList);
+  }
+  refreshInventorySplit();
+  refreshInventoryList();
+}
+async function scanInventory() {
+  $("#invStatus").textContent = "Scanning host (winget / brew / Chrome / VS Code / MCP configs)...";
+  $("#invScanBtn").disabled = true;
+  try {
+    const r = await fetch("/api/inventory/scan", { method: "POST" }).then(r => r.json());
+    $("#invStatus").textContent =
+      `${r.total_upserted || 0} apps tagged · desktop ${r.desktop_binary||0} · browser ${r.browser_ext||0} · IDE ${r.ide_ext||0} · MCP ${r.mcp_server||0}`;
+    refreshInventorySplit();
+    refreshInventoryList();
+  } catch (e) {
+    $("#invStatus").textContent = "Scan failed: " + e.message;
+  } finally {
+    $("#invScanBtn").disabled = false;
+  }
+}
+async function enrichInventory() {
+  $("#invStatus").textContent = "Enriching (Scorecard API + GHSA cross-reference)...";
+  try {
+    const r = await fetch("/api/inventory/enrich", { method: "POST" }).then(r => r.json());
+    $("#invStatus").textContent =
+      `Scorecard ${r.scorecard_enriched} · GHSA matches ${r.ghsa_matches} · scores recomputed ${r.scores_recomputed}`;
+    refreshInventoryList();
+  } catch (e) {
+    $("#invStatus").textContent = "Enrich failed: " + e.message;
+  }
+}
+async function refreshInventorySplit() {
+  const r = await fetch("/api/inventory/stats/provenance").then(r => r.json());
+  const p = r.by_provenance || {};
+  $("#invProvSplit").innerHTML = `
+    <div class="stat"><div class="num">${p.first_party.apps}</div><div class="lbl">first-party apps</div></div>
+    <div class="stat"><div class="num">${p.first_party.cves}</div><div class="lbl">first-party CVEs</div></div>
+    <div class="stat"><div class="num">${p.third_party.apps}</div><div class="lbl">third-party apps</div></div>
+    <div class="stat"><div class="num">${p.third_party.cves}</div><div class="lbl">third-party CVEs</div></div>
+    <div class="stat"><div class="num">${p.unknown.apps}</div><div class="lbl">unknown</div></div>
+  `;
+  const cats = (r.by_category || []).map(c => `
+    <span class="cat-chip">${c.category} <span class="muted">${c.provenance || ''}</span> · ${c.n} · trust ${(c.avg_trust ?? 0).toFixed(0)}</span>
+  `).join("") || `<span class="muted">No applications loaded yet.</span>`;
+  $("#invCatStats").innerHTML = `<div class="cat-stats">${cats}</div>`;
+}
+async function refreshInventoryList() {
+  const prov = $("#invProv").value;
+  const cat  = $("#invCat").value;
+  const params = new URLSearchParams();
+  if (prov) params.set("provenance", prov);
+  if (cat)  params.set("category", cat);
+  const r = await fetch(`/api/inventory?${params}`).then(r => r.json());
+  if (!r.applications || !r.applications.length) {
+    $("#invList").innerHTML = `<div class="muted">No applications matching filters. Click "Scan this host" first.</div>`;
+    return;
+  }
+  $("#invList").innerHTML = r.applications.map(item => {
+    const a = item.app;
+    const band = trustBand(a.trust_score || 0);
+    return `<div class="inv-row" onclick="loadInventoryDetail('${a.id}')">
+      <div>
+        <div class="inv-name">${escapeHtml(a.name || '(unknown)')}</div>
+        <div class="inv-publisher">${escapeHtml(a.publisher || 'unknown publisher')} ${a.version ? '· v' + escapeHtml(a.version) : ''}</div>
+      </div>
+      <span class="inv-cat-pill">${a.category || '?'}</span>
+      <span class="prov-pill ${a.provenance || 'unknown'}">${a.provenance || '?'}</span>
+      <span class="muted">${item.cve_count || 0} CVE</span>
+      <span class="trust-pill ${band}">${(a.trust_score || 0).toFixed(0)}</span>
+      <span class="trust-pill ${band}">${band}</span>
+    </div>`;
+  }).join("");
+}
+function trustBand(score) {
+  if (score >= 80) return "TRUSTED";
+  if (score >= 60) return "OK";
+  if (score >= 40) return "CAUTION";
+  if (score >= 20) return "RISKY";
+  return "DANGEROUS";
+}
+async function loadInventoryDetail(appId) {
+  const r = await fetch(`/api/inventory/${appId}`).then(r => r.json());
+  const a = r.app || {};
+  const band = trustBand(a.trust_score || 0);
+  const cves = (r.cves || []).filter(c => c.id).map(c =>
+    `<span class="chip" onclick="event.stopPropagation();document.querySelector('[data-mode=explore]').click();loadCVE('${c.id}')">${escapeHtml(c.id)} · ${escapeHtml(c.severity || '?')}</span>`).join("") || '<span class="muted">No linked CVEs.</span>';
+  const perms = (a.permissions || []).map(p => `<span class="chip">${escapeHtml(p)}</span>`).join("") || '<span class="muted">None declared.</span>';
+  const deps  = (r.deps || []).filter(d => d.purl).map(d => `<span class="chip">${escapeHtml(d.ecosystem || '?')}/${escapeHtml(d.name || '?')}</span>`).join("") || '<span class="muted">None recorded.</span>';
+
+  // Render inline above the inventory list (replace, not alert)
+  const detail = `
+    <div class="risk-card" style="margin:14px 0">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap">
+        <div style="min-width:0">
+          <div style="font-size:18px;font-weight:600;color:var(--fg-primary);word-break:break-word">${escapeHtml(a.name || '(unknown)')}</div>
+          <div class="muted" style="margin-top:4px">${escapeHtml(a.publisher || 'unknown publisher')} ${a.version ? '· v' + escapeHtml(a.version) : ''}</div>
+          ${a.source_url ? `<div style="margin-top:4px"><a href="${escapeHtml(a.source_url)}" target="_blank" rel="noopener">${escapeHtml(a.source_url)}</a></div>` : ''}
+        </div>
+        <div style="text-align:right">
+          <div class="risk-score">${(a.trust_score || 0).toFixed(0)}<span class="muted" style="font-size:14px"> / 100</span></div>
+          <div><span class="trust-pill ${band}">${band}</span></div>
+          <div class="muted" style="margin-top:4px">
+            <span class="inv-cat-pill">${escapeHtml(a.category || '?')}</span>
+            <span class="prov-pill ${a.provenance || 'unknown'}">${escapeHtml(a.provenance || '?')}</span>
+          </div>
+        </div>
+      </div>
+      <div class="section-h">Permissions</div><div class="chips">${perms}</div>
+      <div class="section-h">Linked CVEs</div><div class="chips">${cves}</div>
+      <div class="section-h">Dependencies</div><div class="chips">${deps}</div>
+      <div style="margin-top:12px"><button class="secondary" onclick="document.getElementById('invDetail').innerHTML=''">Close</button></div>
+    </div>`;
+  let host = document.getElementById("invDetail");
+  if (!host) {
+    host = document.createElement("div");
+    host.id = "invDetail";
+    $("#invList").parentNode.insertBefore(host, $("#invList"));
+  }
+  host.innerHTML = detail;
+  host.scrollIntoView({behavior: "smooth", block: "start"});
+}
+
 /* ---------- HIPAA / Compliance mode ---------- */
 let _hipaaInited = false;
 function initHipaa() {
@@ -631,12 +865,17 @@ async function runClinical() {
     const fail = r.findings.filter(f => !f.passed);
     const failHtml = fail.map(f => `
       <div class="gap-card ${f.severity}">
-        <span class="severity-pill ${f.severity}">${f.severity}</span>
-        <span class="cap">${f.test_id}</span>
-        <span class="muted"> · ${f.category}</span>
-        <div class="muted" style="margin-top:6px">${f.reason}</div>
-        ${f.citation ? `<div class="muted">Citation: ${f.citation}</div>` : ''}
-        <details style="margin-top:6px"><summary class="muted">Model response</summary><pre>${escapeHtml(f.response||'')}</pre></details>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <span class="severity-pill ${f.severity}">${f.severity}</span>
+          <span class="cap">${escapeHtml(f.test_id)}</span>
+          <span class="muted">${escapeHtml(f.category)}</span>
+        </div>
+        <div style="margin-top:8px">${escapeHtml(f.reason || '')}</div>
+        ${f.citation ? `<div class="muted" style="margin-top:6px">Citation: ${escapeHtml(f.citation)}</div>` : ''}
+        <details>
+          <summary>Model response (${(f.response || '').length} chars)</summary>
+          <pre>${escapeHtml(f.response || '')}</pre>
+        </details>
       </div>`).join("");
     $("#clinRunStatus").innerHTML = `
       <div class="sbom-summary">

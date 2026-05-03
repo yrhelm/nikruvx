@@ -12,21 +12,21 @@ Workflow:
 Falls back gracefully if Ollama is unavailable - similarity then falls back
 to lexical Jaccard over the description.
 """
-
 from __future__ import annotations
-
 import argparse
 import re
+import sys
+from typing import Iterable
 
-from rich.console import Console
 from rich.progress import Progress
+from rich.console import Console
 
+from .graph import session, run_read, run_write
 from . import llm
-from .graph import run_read, run_write, session
 
 console = Console()
 
-VECTOR_DIM = 768  # nomic-embed-text default
+VECTOR_DIM = 768   # nomic-embed-text default
 INDEX_NAME = "cve_embedding_idx"
 
 
@@ -51,7 +51,8 @@ def ensure_index() -> None:
 
 
 def _store(cve_id: str, vec: list[float]) -> None:
-    run_write("MATCH (c:CVE {id: $id}) SET c.embedding = $vec", id=cve_id, vec=vec)
+    run_write("MATCH (c:CVE {id: $id}) SET c.embedding = $vec",
+              id=cve_id, vec=vec)
 
 
 # ---------------------------------------------------------------------------
@@ -61,22 +62,17 @@ def embed_corpus(limit: int = 5000, refresh: bool = False) -> int:
     """Generate + store embeddings for CVEs that lack one."""
     if not llm.is_available():
         console.print("[yellow]Ollama unreachable - skipping embedding pass.")
-        console.print(
-            f"  Start it (`ollama serve`) and pull a model: `ollama pull {llm.EMBED_MODEL}`"
-        )
+        console.print(f"  Start it (`ollama serve`) and pull a model: `ollama pull {llm.EMBED_MODEL}`")
         return 0
     ensure_index()
     where = "c.embedding IS NULL" if not refresh else "true"
-    rows = run_read(
-        f"""
+    rows = run_read(f"""
         MATCH (c:CVE)
         WHERE {where} AND c.description IS NOT NULL AND c.description <> ""
         RETURN c.id AS id, c.description AS description
         ORDER BY coalesce(c.cvss_score, 0) DESC
         LIMIT $limit
-    """,
-        limit=limit,
-    )
+    """, limit=limit)
     if not rows:
         console.print("[yellow]Nothing to embed.")
         return 0
@@ -105,8 +101,7 @@ def embed_corpus(limit: int = 5000, refresh: bool = False) -> int:
 def similar(cve_id: str, k: int = 10) -> list[dict]:
     """Return the K most semantically similar CVEs."""
     cve_id = cve_id.upper()
-    rows = run_read(
-        """
+    rows = run_read("""
         MATCH (src:CVE {id: $id})
         WHERE src.embedding IS NOT NULL
         CALL db.index.vector.queryNodes($idx, $k1, src.embedding)
@@ -119,12 +114,7 @@ def similar(cve_id: str, k: int = 10) -> list[dict]:
                collect(DISTINCT w.id) AS cwes,
                collect(DISTINCT l.number) AS layers
         ORDER BY score DESC LIMIT $k
-    """,
-        id=cve_id,
-        idx=INDEX_NAME,
-        k1=k + 5,
-        k=k,
-    )
+    """, id=cve_id, idx=INDEX_NAME, k1=k + 5, k=k)
     if rows:
         return rows
     # Fallback: lexical similarity over keywords
@@ -135,25 +125,19 @@ _TOK = re.compile(r"[a-zA-Z][a-zA-Z0-9_]{2,}")
 
 
 def _lexical_similar(cve_id: str, k: int) -> list[dict]:
-    rows = run_read(
-        """
+    rows = run_read("""
         MATCH (c:CVE {id: $id}) RETURN c.description AS d
-    """,
-        id=cve_id,
-    )
+    """, id=cve_id)
     if not rows or not rows[0]["d"]:
         return []
     target = set(_TOK.findall(rows[0]["d"].lower()))
     if not target:
         return []
-    cands = run_read(
-        """
+    cands = run_read("""
         MATCH (c:CVE) WHERE c.id <> $id AND c.description IS NOT NULL
         RETURN c.id AS id, c.description AS d, c.cvss_score AS cvss, c.severity AS severity
         LIMIT 2000
-    """,
-        id=cve_id,
-    )
+    """, id=cve_id)
     scored = []
     for r in cands:
         toks = set(_TOK.findall((r["d"] or "").lower()))
@@ -161,14 +145,8 @@ def _lexical_similar(cve_id: str, k: int) -> list[dict]:
             continue
         jacc = len(target & toks) / len(target | toks)
         if jacc > 0:
-            scored.append(
-                {
-                    "id": r["id"],
-                    "score": round(jacc, 3),
-                    "cvss": r["cvss"],
-                    "severity": r["severity"],
-                }
-            )
+            scored.append({"id": r["id"], "score": round(jacc, 3),
+                           "cvss": r["cvss"], "severity": r["severity"]})
     scored.sort(key=lambda x: x["score"], reverse=True)
     return scored[:k]
 
@@ -190,7 +168,6 @@ def main() -> None:
         embed_corpus(args.limit, args.refresh)
     elif args.cmd == "similar":
         import json
-
         print(json.dumps(similar(args.cve_id, args.k), indent=2))
 
 

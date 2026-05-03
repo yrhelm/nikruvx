@@ -24,21 +24,18 @@ Usage:
     from ingest.sbom import scan
     result = scan(file_bytes, filename="package.json")
 """
-
 from __future__ import annotations
-
 import json
 import re
 import xml.etree.ElementTree as ET
-from collections import Counter
+from collections import Counter, defaultdict
+from typing import Iterable
 
 from rich.console import Console
 
-from engine.attack_chain import chains_for_packages
 from engine.graph import run_read
-from engine.risk_scoring import RiskInput
-from engine.risk_scoring import score as nexus_score
-
+from engine.attack_chain import chains_for_packages
+from engine.risk_scoring import RiskInput, score as nexus_score
 from .osv import ingest_package as osv_ingest_package
 
 console = Console()
@@ -102,7 +99,6 @@ def _parse_npm_lock(content: str) -> list[tuple[str, str, str | None]]:
         ver = info.get("version")
         if name and ver:
             out.append(("npm", name, ver))
-
     # v1 lockfile fallback
     def _walk(d: dict) -> None:
         for n, sub in (d.get("dependencies") or {}).items():
@@ -110,7 +106,6 @@ def _parse_npm_lock(content: str) -> list[tuple[str, str, str | None]]:
                 if sub.get("version"):
                     out.append(("npm", n, sub["version"]))
                 _walk(sub)
-
     _walk(data)
     return out
 
@@ -122,9 +117,7 @@ def _parse_pypi(content: str) -> list[tuple[str, str, str | None]]:
         if not line or line.startswith("-"):
             continue
         # Strip extras: foo[bar]==1.2 -> foo
-        m = re.match(
-            r"^([A-Za-z0-9_.\-]+)(?:\[[^\]]+\])?\s*(?:==|>=|~=|!=|<|>)?\s*([0-9A-Za-z.\-+]*)?", line
-        )
+        m = re.match(r"^([A-Za-z0-9_.\-]+)(?:\[[^\]]+\])?\s*(?:==|>=|~=|!=|<|>)?\s*([0-9A-Za-z.\-+]*)?", line)
         if not m:
             continue
         name = m.group(1)
@@ -156,11 +149,9 @@ def _parse_go(content: str) -> list[tuple[str, str, str | None]]:
     for line in content.splitlines():
         s = line.strip()
         if s.startswith("require ("):
-            in_block = True
-            continue
+            in_block = True; continue
         if in_block and s == ")":
-            in_block = False
-            continue
+            in_block = False; continue
         if in_block or s.startswith("require "):
             m = re.match(r"(?:require\s+)?([\w\-./]+)\s+([\w\-.+]+)", s)
             if m:
@@ -200,24 +191,12 @@ def _parse_cyclonedx(content: str) -> list[tuple[str, str, str | None]]:
         m = re.match(r"pkg:(\w+)/(?:([^/@]+)/)?([^@]+)@?([^?]*)?", purl)
         if m:
             eco_raw = m.group(1).lower()
-            ecosystem = {
-                "npm": "npm",
-                "pypi": "PyPI",
-                "maven": "Maven",
-                "golang": "Go",
-                "gem": "RubyGems",
-                "cargo": "crates.io",
-                "deb": "Debian",
-                "apk": "Alpine",
-            }.get(eco_raw, eco_raw)
+            ecosystem = {"npm":"npm","pypi":"PyPI","maven":"Maven","golang":"Go",
+                         "gem":"RubyGems","cargo":"crates.io","deb":"Debian","apk":"Alpine"}.get(eco_raw, eco_raw)
             ns = m.group(2)
             name = m.group(3)
             ver = m.group(4) or c.get("version")
-            full = (
-                f"{ns}/{name}"
-                if ns and ecosystem == "Go"
-                else (f"{ns}:{name}" if ns and ecosystem == "Maven" else name)
-            )
+            full = f"{ns}/{name}" if ns and ecosystem == "Go" else (f"{ns}:{name}" if ns and ecosystem == "Maven" else name)
             out.append((ecosystem, full, ver))
         elif c.get("name"):
             out.append((c.get("type", "unknown"), c["name"], c.get("version")))
@@ -242,15 +221,9 @@ def _parse_spdx(content: str) -> list[tuple[str, str, str | None]]:
 
 
 PARSERS = {
-    "npm": _parse_npm,
-    "npm-lock": _parse_npm_lock,
-    "pypi": _parse_pypi,
-    "maven": _parse_maven,
-    "go": _parse_go,
-    "rubygems": _parse_gemfile,
-    "cargo": _parse_cargo,
-    "cyclonedx": _parse_cyclonedx,
-    "spdx": _parse_spdx,
+    "npm": _parse_npm, "npm-lock": _parse_npm_lock, "pypi": _parse_pypi,
+    "maven": _parse_maven, "go": _parse_go, "rubygems": _parse_gemfile,
+    "cargo": _parse_cargo, "cyclonedx": _parse_cyclonedx, "spdx": _parse_spdx,
 }
 
 
@@ -264,8 +237,7 @@ def _purl(eco: str, name: str) -> str:
 def _lookup(components: list[tuple[str, str, str | None]]) -> dict:
     """For each component, return matching CVEs from the graph."""
     purls = list({_purl(e, n) for e, n, _ in components})
-    rows = run_read(
-        """
+    rows = run_read("""
         MATCH (p:Package)
         WHERE p.purl IN $purls
         OPTIONAL MATCH (p)<-[r:AFFECTS]-(c:CVE)
@@ -278,19 +250,15 @@ def _lookup(components: list[tuple[str, str, str | None]]) -> dict:
                collect(DISTINCT w.id) AS cwes,
                collect(DISTINCT l.number) AS layers,
                count(DISTINCT po) AS poc_count
-    """,
-        purls=purls,
-    )
+    """, purls=purls)
     return rows
 
 
 def scan(content: bytes | str, filename: str = "") -> dict:
     """Main entry. Returns full attack-surface snapshot."""
     if isinstance(content, bytes):
-        try:
-            content = content.decode("utf-8")
-        except UnicodeDecodeError:
-            content = content.decode("latin-1", errors="ignore")
+        try: content = content.decode("utf-8")
+        except UnicodeDecodeError: content = content.decode("latin-1", errors="ignore")
     fmt = _detect(filename, content)
     parser = PARSERS.get(fmt)
     if parser is None:
@@ -303,12 +271,9 @@ def scan(content: bytes | str, filename: str = "") -> dict:
 
     # Auto-ingest unknown packages from OSV (limit to avoid hammering)
     purl_set = {_purl(e, n) for e, n, _ in components}
-    known_rows = run_read(
-        """
+    known_rows = run_read("""
         MATCH (p:Package) WHERE p.purl IN $purls RETURN p.purl AS purl
-    """,
-        purls=list(purl_set),
-    )
+    """, purls=list(purl_set))
     known = {r["purl"] for r in known_rows}
     missing = [(e, n) for e, n, _ in components if _purl(e, n) not in known]
     if missing:
@@ -330,42 +295,26 @@ def scan(content: bytes | str, filename: str = "") -> dict:
     package_count = 0
 
     for r in rows:
-        entry = by_purl.setdefault(
-            r["purl"],
-            {
-                "ecosystem": r["eco"],
-                "name": r["name"],
-                "purl": r["purl"],
-                "cves": [],
-            },
-        )
+        entry = by_purl.setdefault(r["purl"], {
+            "ecosystem": r["eco"], "name": r["name"], "purl": r["purl"], "cves": [],
+        })
         if not r["cve"]:
             continue
         if r["cve"] not in cve_set:
             cve_set.add(r["cve"])
-            cve_metrics.append(
-                RiskInput(
-                    cvss_score=r["cvss"],
-                    cwe_ids=[c for c in r["cwes"] if c],
-                    osi_layers=[l for l in r["layers"] if l],
-                    poc_count=r["poc_count"],
-                    package_count=1,
-                    published=r["published"],
-                )
-            )
-        entry["cves"].append(
-            {
-                "id": r["cve"],
-                "cvss": r["cvss"],
-                "severity": r["severity"],
-                "cwes": [c for c in r["cwes"] if c],
-                "layers": [l for l in r["layers"] if l],
-                "poc_count": r["poc_count"],
-            }
-        )
+            cve_metrics.append(RiskInput(
+                cvss_score=r["cvss"], cwe_ids=[c for c in r["cwes"] if c],
+                osi_layers=[l for l in r["layers"] if l], poc_count=r["poc_count"],
+                package_count=1, published=r["published"],
+            ))
+        entry["cves"].append({
+            "id": r["cve"], "cvss": r["cvss"], "severity": r["severity"],
+            "cwes": [c for c in r["cwes"] if c],
+            "layers": [l for l in r["layers"] if l],
+            "poc_count": r["poc_count"],
+        })
         for l in r["layers"] or []:
-            if l:
-                layer_counter[l] += 1
+            if l: layer_counter[l] += 1
         if r["severity"]:
             severity_counter[r["severity"]] += 1
     package_count = len(by_purl)
@@ -378,7 +327,7 @@ def scan(content: bytes | str, filename: str = "") -> dict:
         idx = max(0, int(len(individual_scores) * 0.75) - 1)
         p75 = individual_scores[idx]
         # Pump it up by stack size + CVE count (more deps = bigger surface)
-        aggregate = min(100.0, p75 + 0.05 * len(cve_metrics) + 0.4 * package_count**0.5)
+        aggregate = min(100.0, p75 + 0.05 * len(cve_metrics) + 0.4 * package_count ** 0.5)
 
     # Top attack chains starting from this stack
     try:
@@ -402,12 +351,8 @@ def scan(content: bytes | str, filename: str = "") -> dict:
 
 
 def _band(score: float) -> str:
-    if score >= 80:
-        return "CRITICAL"
-    if score >= 60:
-        return "HIGH"
-    if score >= 40:
-        return "MEDIUM"
-    if score >= 20:
-        return "LOW"
+    if score >= 80: return "CRITICAL"
+    if score >= 60: return "HIGH"
+    if score >= 40: return "MEDIUM"
+    if score >= 20: return "LOW"
     return "INFO"

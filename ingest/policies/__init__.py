@@ -9,13 +9,11 @@ The parse_any function sniffs JSON/XML/text content, detects the platform,
 and routes to the right parser. Returns a list of normalized Policy objects.
 """
 from __future__ import annotations
-
 import json
 
 from engine.policy_model import Policy
-
 from . import aws, azure, gcp, generic
-from .upsert import upsert_policies as upsert_policies  # explicit re-export
+from .upsert import upsert_policies as upsert_policies   # explicit re-export
 
 __all__ = ["parse_any", "upsert_policies", "Policy"]
 

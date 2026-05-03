@@ -11,7 +11,6 @@ Usage:
     md = generate_markdown(stack_summary="My PHI app", scope="Production")
 """
 from __future__ import annotations
-
 import datetime as _dt
 from io import BytesIO
 

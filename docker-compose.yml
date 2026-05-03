@@ -14,6 +14,9 @@ services:
   neo4j:
     image: neo4j:5.20-community
     container_name: nikruvx-neo4j
+    hostname: neo4j               # explicit hostname so log4j2 can resolve it
+    extra_hosts:
+      - "neo4j:127.0.0.1"          # ensure local resolution inside container
     restart: unless-stopped
     ports:
       - "7474:7474"   # HTTP browser
@@ -24,20 +27,23 @@ services:
       NEO4J_AUTH: "${NEO4J_AUTH:-neo4j/nexus_password}"
       NEO4J_PLUGINS: '["apoc"]'
       NEO4J_dbms_security_procedures_unrestricted: "apoc.*"
-      NEO4J_dbms_memory_heap_max__size: "${NEO4J_HEAP:-2G}"
-      NEO4J_dbms_memory_pagecache_size: "${NEO4J_CACHE:-1G}"
+      # Modern Neo4j 5.x setting names (the dbms.memory.* names are deprecated)
+      NEO4J_server_memory_heap_max__size: "${NEO4J_HEAP:-2G}"
+      NEO4J_server_memory_pagecache_size: "${NEO4J_CACHE:-1G}"
     volumes:
       - ./data/neo4j/data:/data
       - ./data/neo4j/logs:/logs
       - ./data/neo4j/plugins:/plugins
       - ./data/neo4j/import:/var/lib/neo4j/import
     healthcheck:
+      # `wget` ships in the Neo4j Debian image. The explicit --timeout=5 is
+      # critical -- without it wget can hang on a half-open socket forever.
       test: ["CMD-SHELL",
-             "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1"]
+             "wget --no-verbose --tries=1 --timeout=5 --spider http://localhost:7474 || exit 1"]
       interval: 10s
-      timeout: 5s
+      timeout: 8s
       retries: 30
-      start_period: 30s
+      start_period: 90s   # APOC download on first boot can take 30-60s on slow links
     networks: [nikruvx]
 
   api:
@@ -66,7 +72,9 @@ services:
       - .:/app
     depends_on:
       neo4j:
-        condition: service_healthy
+        # service_started: don't block API startup on Neo4j healthcheck flakiness.
+        # The API has its own retry-on-startup logic for Neo4j connectivity.
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/api/health\", timeout=3)'"]
       interval: 15s
