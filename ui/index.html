@@ -31,6 +31,8 @@
     <button class="mode-btn" data-mode="hipaa">HIPAA / Compliance</button>
     <button class="mode-btn" data-mode="clinical">Clinical AI</button>
     <button class="mode-btn" data-mode="lineage">PHI Lineage</button>
+    <button class="mode-btn" data-mode="mcpgate">MCP Gate</button>
+    <button class="mode-btn" data-mode="modelgate">Model Gate</button>
     <button class="mode-btn" data-mode="kev">Live KEV</button>
   </nav>
 </header>
@@ -282,6 +284,147 @@
       <h2>Live KEV — <span class="muted">CISA Known Exploited Vulnerabilities</span></h2>
       <button id="kevRefresh">Refresh from CISA</button>
       <div id="kevResult" class="kev-result"></div>
+    </div>
+  </section>
+
+  <section id="mcpgateMode" class="mode-overlay" hidden>
+    <div class="mode-inner">
+      <h2>MCP Gate — <span class="muted">pre-deployment review for MCP servers + AI agents</span></h2>
+      <nav class="sub-tabs">
+        <button class="sub-btn active" data-mcpsub="installed">Review Installed</button>
+        <button class="sub-btn" data-mcpsub="paste">Review New (Paste Config)</button>
+        <button class="sub-btn" data-mcpsub="approvals">Approvals</button>
+        <button class="sub-btn" data-mcpsub="shadow">Shadow Check</button>
+      </nav>
+
+      <div id="mcpsubInstalled" class="sub-pane">
+        <div class="rt-row">
+          <button id="mcpRunInstalled">Run review on installed MCPs</button>
+          <label><input id="mcpPersist" type="checkbox"/> Persist results to graph</label>
+        </div>
+        <div id="mcpInstalledOut" class="muted">Click the button to enumerate &amp; review every installed MCP.</div>
+      </div>
+
+      <div id="mcpsubPaste" class="sub-pane" hidden>
+        <div class="muted" style="margin-bottom:6px">
+          Paste either a single MCP entry (<code>{"name":"…","command":"…","args":[…]}</code>)
+          or a full Claude Desktop / Cursor config with a <code>mcpServers</code> object.
+          Include a <code>tools</code> array (<code>[{"name":"…","description":"…"}]</code>)
+          to enable the tool-poisoning scan.
+        </div>
+        <textarea id="mcpPasteConfig" rows="10" style="width:100%"
+          placeholder='{"name":"fetch","command":"uvx","args":["mcp-server-fetch"],"tools":[{"name":"fetch_url","description":"Fetch a URL"}]}'></textarea>
+        <div class="rt-row" style="margin-top:8px">
+          <button id="mcpPasteRun">Review</button>
+          <label><input id="mcpPastePersist" type="checkbox"/> Persist</label>
+        </div>
+        <div id="mcpPasteOut" class="rt-result" style="margin-top:12px;display:none"></div>
+      </div>
+
+      <div id="mcpsubApprovals" class="sub-pane" hidden>
+        <div class="rt-row">
+          <label>Filter
+            <select id="mcpApprovalStatus">
+              <option value="">All</option>
+              <option value="approve">Approved</option>
+              <option value="request_changes">Request Changes</option>
+              <option value="block">Blocked</option>
+            </select>
+          </label>
+          <button id="mcpRefreshApprovals">Refresh</button>
+        </div>
+        <div id="mcpApprovalsOut" class="muted">Click "Refresh" to load.</div>
+      </div>
+
+      <div id="mcpsubShadow" class="sub-pane" hidden>
+        <div class="muted" style="margin-bottom:6px">
+          Shadow-MCP detection: paste your approved-MCP names (one per line)
+          and we'll list anything installed locally that isn't on the list.
+        </div>
+        <textarea id="mcpApprovedList" rows="6" style="width:100%"
+          placeholder='@modelcontextprotocol/server-filesystem
+mcp-server-fetch
+github-mcp'></textarea>
+        <div class="rt-row" style="margin-top:8px">
+          <button id="mcpShadowRun">Run shadow check</button>
+        </div>
+        <div id="mcpShadowOut" class="muted" style="margin-top:12px"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="modelgateMode" class="mode-overlay" hidden>
+    <div class="mode-inner">
+      <h2>Model Gate — <span class="muted">security regression suite for any LLM</span></h2>
+      <nav class="sub-tabs">
+        <button class="sub-btn active" data-mgsub="run">Run Eval</button>
+        <button class="sub-btn" data-mgsub="diff">Regression Diff</button>
+        <button class="sub-btn" data-mgsub="catalog">Probe Catalog</button>
+        <button class="sub-btn" data-mgsub="history">History</button>
+      </nav>
+
+      <div id="mgsubRun" class="sub-pane">
+        <div class="muted" style="margin-bottom:6px">
+          Model spec format:
+          <code>ollama:llama3.1</code>,
+          <code>openai:gpt-4o-mini</code>,
+          <code>anthropic:claude-3-5-sonnet-20241022</code>,
+          <code>copilot:gpt-4o</code>,
+          <code>stub:demo</code> (offline demo).
+          API keys are read from <code>OPENAI_API_KEY</code> /
+          <code>ANTHROPIC_API_KEY</code> / <code>COPILOT_TOKEN</code>.
+        </div>
+        <div class="rt-row">
+          <input id="mgModelSpec" type="text" value="stub:demo"
+            placeholder="ollama:llama3.1 | openai:gpt-4o-mini | …"
+            style="flex:1;min-width:260px"/>
+          <select id="mgCategoryFilter" multiple size="4"
+            style="min-width:200px;background:var(--bg-elevated);color:var(--fg-primary)">
+            <option value="">— all categories —</option>
+          </select>
+          <button id="mgRun">Run</button>
+          <label><input id="mgPersist" type="checkbox"/> Persist</label>
+        </div>
+        <div id="mgRunOut" class="muted" style="margin-top:12px">
+          Pick a model spec and click Run. The default <code>stub:demo</code>
+          uses a built-in refusal-style stub so you can see the suite end-to-end
+          without any API keys.
+        </div>
+      </div>
+
+      <div id="mgsubDiff" class="sub-pane" hidden>
+        <div class="muted" style="margin-bottom:6px">
+          Regression mode: compare a candidate model against a baseline. Surfaces
+          only the probes that newly fail in the candidate (and, separately,
+          probes the candidate fixes).
+        </div>
+        <div class="rt-row">
+          <label>Candidate
+            <input id="mgDiffCandidate" type="text" value="openai:gpt-5"
+              style="min-width:220px"/>
+          </label>
+          <label>Baseline
+            <input id="mgDiffBaseline" type="text" value="openai:gpt-4o"
+              style="min-width:220px"/>
+          </label>
+          <button id="mgDiffRun">Run diff</button>
+        </div>
+        <div id="mgDiffOut" class="muted" style="margin-top:12px"></div>
+      </div>
+
+      <div id="mgsubCatalog" class="sub-pane" hidden>
+        <div class="rt-row">
+          <button id="mgLoadCatalog">Load probe catalog</button>
+        </div>
+        <div id="mgCatalogOut" class="muted" style="margin-top:12px"></div>
+      </div>
+
+      <div id="mgsubHistory" class="sub-pane" hidden>
+        <div class="rt-row">
+          <button id="mgRefreshHistory">Refresh history</button>
+        </div>
+        <div id="mgHistoryOut" class="muted" style="margin-top:12px"></div>
+      </div>
     </div>
   </section>
 

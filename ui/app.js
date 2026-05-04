@@ -35,7 +35,7 @@ function initModes() {
 }
 function switchMode(mode) {
   document.querySelectorAll(".mode-btn").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
-  ["sbomMode","redteamMode","kevMode","postureMode","hipaaMode","clinicalMode","inventoryMode","supplychainMode","lineageMode"].forEach(id => {
+  ["sbomMode","redteamMode","kevMode","postureMode","hipaaMode","clinicalMode","inventoryMode","supplychainMode","lineageMode","mcpgateMode","modelgateMode"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.hidden = id !== `${mode}Mode`;
   });
@@ -46,6 +46,8 @@ function switchMode(mode) {
   if (mode === "inventory")    initInventory();
   if (mode === "supplychain")  initSupplyChain();
   if (mode === "lineage")      initLineage();
+  if (mode === "mcpgate")      initMcpGate();
+  if (mode === "modelgate")    initModelGate();
 }
 
 /* ---------- bootstrap ---------- */
@@ -1144,6 +1146,376 @@ async function drawGraph(cveId) {
 
   $("#graphHint").textContent = `nexus around ${cveId} · ${nodes.length} nodes, ${edges.length} edges`;
   _lastGraphCve = cveId;
+}
+
+/* ---------- MCP Gate ---------- */
+let _mcpInited = false;
+function initMcpGate() {
+  if (_mcpInited) return;
+  _mcpInited = true;
+  document.querySelectorAll("#mcpgateMode .sub-btn").forEach(btn => {
+    btn.addEventListener("click", () => switchMcpSub(btn.dataset.mcpsub));
+  });
+  $("#mcpRunInstalled").addEventListener("click", mcpRunInstalled);
+  $("#mcpPasteRun").addEventListener("click", mcpPasteRun);
+  $("#mcpRefreshApprovals").addEventListener("click", mcpLoadApprovals);
+  $("#mcpShadowRun").addEventListener("click", mcpRunShadow);
+}
+
+function switchMcpSub(sub) {
+  document.querySelectorAll("#mcpgateMode .sub-btn")
+    .forEach(b => b.classList.toggle("active", b.dataset.mcpsub === sub));
+  ["mcpsubInstalled","mcpsubPaste","mcpsubApprovals","mcpsubShadow"].forEach(id => {
+    const want = "mcpsub" + sub.charAt(0).toUpperCase() + sub.slice(1);
+    const el = document.getElementById(id);
+    if (el) el.hidden = id !== want;
+  });
+  if (sub === "approvals") mcpLoadApprovals();
+}
+
+function mcpVerdictChip(v) {
+  const palette = {
+    "approve": ["#0f2a16", "#3fb950"],
+    "request_changes": ["#3a3012", "#d29922"],
+    "block": ["#3a1212", "#f85149"],
+  }[v] || ["#1c2128", "#d6e1f5"];
+  return `<span class="chip" style="background:${palette[0]};color:${palette[1]};font-weight:600">${v.toUpperCase().replace("_"," ")}</span>`;
+}
+
+function mcpSeverityChip(s) {
+  const palette = {
+    critical: ["#3a1212","#ffb4b4"],
+    high:     ["#3a1f12","#ffb480"],
+    medium:   ["#3a3012","#ffd479"],
+    low:      ["#1f3a2a","#a4e2b8"],
+    info:     ["#1c2128","#d6e1f5"],
+  }[s] || ["#1c2128","#d6e1f5"];
+  return `<span class="chip" style="background:${palette[0]};color:${palette[1]}">${s}</span>`;
+}
+
+function mcpRenderFindings(findings) {
+  if (!findings || !findings.length) {
+    return '<div class="muted" style="margin-top:6px">No findings.</div>';
+  }
+  return findings.map(f => `
+    <div class="gap-card">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        ${mcpSeverityChip(f.severity)}
+        <b>${escapeHtml(f.title)}</b>
+        <span class="muted"><code>${escapeHtml(f.check_id)}</code></span>
+      </div>
+      <div class="muted" style="margin-top:4px">${escapeHtml(f.description)}</div>
+      ${f.evidence ? `<div style="margin-top:6px"><span class="muted">Evidence:</span> <code>${escapeHtml(f.evidence)}</code></div>` : ""}
+      ${f.remediation ? `<div style="margin-top:6px"><b>Remediation:</b> ${escapeHtml(f.remediation)}</div>` : ""}
+    </div>
+  `).join("");
+}
+
+async function mcpRunInstalled() {
+  $("#mcpInstalledOut").innerHTML = `<span class="muted">Reviewing installed MCPs…</span>`;
+  const persist = $("#mcpPersist").checked;
+  try {
+    const r = await fetch(`${API}/mcp-gate/review-installed?persist=${persist}`, {method:"POST"})
+      .then(r => r.json());
+    if (!r.reviews || !r.reviews.length) {
+      $("#mcpInstalledOut").innerHTML = `<span class="muted">No installed MCPs detected.</span>`;
+      return;
+    }
+    const cards = r.reviews.map(rev => `
+      <div class="gap-card">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          ${mcpVerdictChip(rev.verdict)}
+          <b>${escapeHtml(rev.target_name)}</b>
+          <span class="muted">auth: <code>${escapeHtml(rev.auth_method)}</code> · transport: <code>${escapeHtml(rev.transport||'?')}</code> · ${rev.findings_count} finding(s)</span>
+        </div>
+        <div style="margin-top:8px">${mcpRenderFindings(rev.findings)}</div>
+      </div>
+    `).join("");
+    $("#mcpInstalledOut").innerHTML = `<div class="muted" style="margin:6px 0">${r.count} MCP(s) reviewed.</div>${cards}`;
+  } catch (e) {
+    $("#mcpInstalledOut").innerHTML = `<span class="muted">Review failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function mcpPasteRun() {
+  const raw = $("#mcpPasteConfig").value.trim();
+  if (!raw) { alert("Paste an MCP config JSON first"); return; }
+  let cfg;
+  try { cfg = JSON.parse(raw); }
+  catch (e) { alert("Config is not valid JSON: " + e.message); return; }
+
+  $("#mcpPasteOut").style.display = "block";
+  $("#mcpPasteOut").innerHTML = `<span class="muted">Reviewing…</span>`;
+  try {
+    const r = await fetch(`${API}/mcp-gate/review`, {
+      method: "POST", headers: {"content-type":"application/json"},
+      body: JSON.stringify({config: cfg, persist: $("#mcpPastePersist").checked}),
+    }).then(r => r.json());
+    $("#mcpPasteOut").innerHTML = `
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+        ${mcpVerdictChip(r.verdict)}
+        <b>${escapeHtml(r.target_name)}</b>
+        <span class="muted">auth: <code>${escapeHtml(r.auth_method)}</code> · transport: <code>${escapeHtml(r.transport||'?')}</code></span>
+      </div>
+      <div class="muted">Inferred permissions: ${(r.inferred_permissions||[]).map(p => `<span class="chip">${escapeHtml(p)}</span>`).join(" ") || "(none)"}</div>
+      <div class="muted" style="margin-top:4px">Declared tools: ${(r.declared_tools||[]).map(t => `<span class="chip">${escapeHtml(t)}</span>`).join(" ") || "(none)"}</div>
+      <div style="margin-top:12px">${mcpRenderFindings(r.findings)}</div>`;
+  } catch (e) {
+    $("#mcpPasteOut").innerHTML = `<span class="muted">Review failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function mcpLoadApprovals() {
+  const status = $("#mcpApprovalStatus").value;
+  $("#mcpApprovalsOut").innerHTML = `<span class="muted">Loading approvals…</span>`;
+  try {
+    const url = `${API}/mcp-gate/approvals${status ? `?status=${status}` : ""}`;
+    const r = await fetch(url).then(r => r.json());
+    if (!r.rows || !r.rows.length) {
+      $("#mcpApprovalsOut").innerHTML = `<span class="muted">No persisted approvals yet. Run "Review Installed" with Persist checked, or paste a config and check Persist.</span>`;
+      return;
+    }
+    const headers = `<tr><th>Status</th><th>Target</th><th>Auth</th><th>Transport</th><th>Findings</th><th>When</th></tr>`;
+    const rows = r.rows.map(a => `
+      <tr>
+        <td>${mcpVerdictChip(a.status||"unknown")}</td>
+        <td><b>${escapeHtml(a.target_name||"?")}</b></td>
+        <td><code>${escapeHtml(a.auth_method||"?")}</code></td>
+        <td><code>${escapeHtml(a.transport||"?")}</code></td>
+        <td>${a.findings_count||0}</td>
+        <td><span class="muted">${escapeHtml(a.reviewed_at||"")}</span></td>
+      </tr>`).join("");
+    $("#mcpApprovalsOut").innerHTML =
+      `<table class="matrix-table">${headers}${rows}</table>`;
+  } catch (e) {
+    $("#mcpApprovalsOut").innerHTML = `<span class="muted">Approvals load failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function mcpRunShadow() {
+  const text = $("#mcpApprovedList").value.trim();
+  const approved = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  $("#mcpShadowOut").innerHTML = `<span class="muted">Running shadow check…</span>`;
+  try {
+    const r = await fetch(`${API}/mcp-gate/shadow-check`, {
+      method: "POST", headers: {"content-type":"application/json"},
+      body: JSON.stringify({approved}),
+    }).then(r => r.json());
+    if (r.error) {
+      $("#mcpShadowOut").innerHTML = `<span class="muted">Shadow check failed: ${escapeHtml(r.error)}</span>`;
+      return;
+    }
+    const shadow = (r.shadow||[]).map(n =>
+      `<div class="gap-card"><span class="chip" style="background:#3a1212;color:#ffb4b4">SHADOW</span> <b>${escapeHtml(n)}</b></div>`).join("");
+    const installed = (r.installed||[]).map(n =>
+      `<span class="chip">${escapeHtml(n)}</span>`).join(" ");
+    $("#mcpShadowOut").innerHTML = `
+      <div class="hero-stats" style="margin-bottom:10px">
+        <div class="stat"><div class="num">${r.installed_count||0}</div><div class="lbl">Installed</div></div>
+        <div class="stat"><div class="num" style="color:#3fb950">${r.approved_count||0}</div><div class="lbl">Approved</div></div>
+        <div class="stat"><div class="num" style="color:#f85149">${r.shadow_count||0}</div><div class="lbl">Shadow</div></div>
+      </div>
+      ${shadow || '<div class="muted">No shadow MCPs — every installed server is on the approved list.</div>'}
+      <div class="muted" style="margin-top:12px">All installed: ${installed || "(none)"}</div>`;
+  } catch (e) {
+    $("#mcpShadowOut").innerHTML = `<span class="muted">Shadow check failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+/* ---------- Model Gate ---------- */
+let _mgInited = false;
+let _mgCorpusLoaded = false;
+function initModelGate() {
+  if (_mgInited) return;
+  _mgInited = true;
+  document.querySelectorAll("#modelgateMode .sub-btn").forEach(btn => {
+    btn.addEventListener("click", () => switchMgSub(btn.dataset.mgsub));
+  });
+  $("#mgRun").addEventListener("click", mgRunEval);
+  $("#mgDiffRun").addEventListener("click", mgRunDiff);
+  $("#mgLoadCatalog").addEventListener("click", mgLoadCatalog);
+  $("#mgRefreshHistory").addEventListener("click", mgLoadHistory);
+  // Populate the category filter dropdown from the corpus catalog
+  mgPopulateCategoryFilter();
+}
+
+function switchMgSub(sub) {
+  document.querySelectorAll("#modelgateMode .sub-btn")
+    .forEach(b => b.classList.toggle("active", b.dataset.mgsub === sub));
+  ["mgsubRun","mgsubDiff","mgsubCatalog","mgsubHistory"].forEach(id => {
+    const want = "mgsub" + sub.charAt(0).toUpperCase() + sub.slice(1);
+    const el = document.getElementById(id);
+    if (el) el.hidden = id !== want;
+  });
+  if (sub === "history") mgLoadHistory();
+  if (sub === "catalog" && !_mgCorpusLoaded) mgLoadCatalog();
+}
+
+async function mgPopulateCategoryFilter() {
+  try {
+    const r = await fetch(`${API}/model-gate/corpus`).then(r => r.json());
+    const sel = $("#mgCategoryFilter");
+    sel.innerHTML = "";
+    (r.categories || []).forEach(c => {
+      const opt = document.createElement("option");
+      opt.value = c; opt.textContent = c;
+      sel.appendChild(opt);
+    });
+  } catch { /* silent */ }
+}
+
+function mgScoreColor(score) {
+  if (score >= 90) return "#3fb950";
+  if (score >= 70) return "#d29922";
+  return "#f85149";
+}
+
+function mgSeverityChip(s) {
+  return mcpSeverityChip(s);
+}
+
+function mgRenderOutcomes(outcomes) {
+  if (!outcomes || !outcomes.length) return '<div class="muted">No outcomes.</div>';
+  // Group by category
+  const byCat = {};
+  outcomes.forEach(o => {
+    (byCat[o.category] = byCat[o.category] || []).push(o);
+  });
+  return Object.keys(byCat).sort().map(cat => {
+    const items = byCat[cat].map(o => `
+      <div class="gap-card">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <span class="chip" style="background:${o.passed ? '#0f2a16' : '#3a1212'};color:${o.passed ? '#3fb950' : '#ffb4b4'};font-weight:600">${o.passed ? 'PASS' : 'FAIL'}</span>
+          ${mgSeverityChip(o.severity)}
+          <b>${escapeHtml(o.title)}</b>
+          <span class="muted"><code>${escapeHtml(o.probe_id)}</code></span>
+        </div>
+        <div class="muted" style="margin-top:4px">Reason: ${escapeHtml(o.reason||'')}</div>
+        ${o.response_excerpt ? `<details style="margin-top:6px"><summary class="muted">Response excerpt (${o.response_chars||0} chars)</summary><pre style="white-space:pre-wrap;word-break:break-word">${escapeHtml(o.response_excerpt)}</pre></details>` : ""}
+      </div>
+    `).join("");
+    return `<h4 style="margin-top:14px">${escapeHtml(cat)} (${byCat[cat].length})</h4>${items}`;
+  }).join("");
+}
+
+async function mgRunEval() {
+  const spec = $("#mgModelSpec").value.trim();
+  if (!spec) { alert("Enter a model spec first"); return; }
+  const cats = Array.from($("#mgCategoryFilter").selectedOptions)
+    .map(o => o.value).filter(Boolean);
+  $("#mgRunOut").innerHTML = `<span class="muted">Running ${escapeHtml(spec)} — this may take 30-60s on a real model…</span>`;
+  try {
+    const r = await fetch(`${API}/model-gate/evaluate`, {
+      method: "POST", headers: {"content-type":"application/json"},
+      body: JSON.stringify({
+        model_spec: spec,
+        categories: cats.length ? cats : null,
+        persist: $("#mgPersist").checked,
+      }),
+    }).then(r => r.json());
+    $("#mgRunOut").innerHTML = `
+      <div class="hero-stats" style="margin-bottom:14px">
+        <div class="stat"><div class="num" style="color:${mgScoreColor(r.trust_score)}">${r.trust_score||0}</div><div class="lbl">Trust Score</div></div>
+        <div class="stat"><div class="num" style="color:#3fb950">${r.passed||0}</div><div class="lbl">Passed</div></div>
+        <div class="stat"><div class="num" style="color:#f85149">${r.failed||0}</div><div class="lbl">Failed</div></div>
+        <div class="stat"><div class="num">${r.probes_total||0}</div><div class="lbl">Total</div></div>
+      </div>
+      <div class="muted">Model: <code>${escapeHtml(r.model_spec||spec)}</code> · vendor <code>${escapeHtml(r.vendor_id||'?')}</code> · ${escapeHtml(r.ts||'')}</div>
+      <div style="margin-top:12px">${mgRenderOutcomes(r.outcomes||[])}</div>`;
+  } catch (e) {
+    $("#mgRunOut").innerHTML = `<span class="muted">Eval failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function mgRunDiff() {
+  const cand = $("#mgDiffCandidate").value.trim();
+  const base = $("#mgDiffBaseline").value.trim();
+  if (!cand || !base) { alert("Enter both candidate and baseline specs"); return; }
+  $("#mgDiffOut").innerHTML = `<span class="muted">Running diff (this runs the suite twice — be patient)…</span>`;
+  try {
+    const r = await fetch(`${API}/model-gate/diff`, {
+      method: "POST", headers: {"content-type":"application/json"},
+      body: JSON.stringify({candidate_spec: cand, baseline_spec: base}),
+    }).then(r => r.json());
+    const newFails = (r.new_failures||[]).map(o => `
+      <div class="gap-card">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <span class="chip" style="background:#3a1212;color:#ffb4b4;font-weight:600">REGRESSION</span>
+          ${mgSeverityChip(o.severity)}
+          <b>${escapeHtml(o.title)}</b>
+          <span class="muted"><code>${escapeHtml(o.probe_id)}</code></span>
+        </div>
+        <div class="muted" style="margin-top:4px">Was passing in baseline; now: ${escapeHtml(o.reason||'')}</div>
+      </div>`).join("");
+    const fixed = (r.fixed||[]).map(o => `
+      <div class="gap-card">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <span class="chip" style="background:#0f2a16;color:#3fb950;font-weight:600">FIXED</span>
+          ${mgSeverityChip(o.severity)}
+          <b>${escapeHtml(o.title)}</b>
+        </div>
+      </div>`).join("");
+    const deltaColor = r.trust_score_delta >= 0 ? "#3fb950" : "#f85149";
+    $("#mgDiffOut").innerHTML = `
+      <div class="hero-stats" style="margin-bottom:14px">
+        <div class="stat"><div class="num" style="color:${deltaColor}">${r.trust_score_delta>=0?'+':''}${r.trust_score_delta}</div><div class="lbl">Score Δ</div></div>
+        <div class="stat"><div class="num" style="color:#f85149">${r.new_failures_count||0}</div><div class="lbl">Regressions</div></div>
+        <div class="stat"><div class="num" style="color:#3fb950">${r.fixed_count||0}</div><div class="lbl">Fixed</div></div>
+        <div class="stat"><div class="num">${r.unchanged_pass||0}</div><div class="lbl">Unchanged Pass</div></div>
+        <div class="stat"><div class="num">${r.unchanged_fail||0}</div><div class="lbl">Unchanged Fail</div></div>
+      </div>
+      <div class="muted">Candidate: <code>${escapeHtml(cand)}</code> (${r.candidate_trust_score}) · Baseline: <code>${escapeHtml(base)}</code> (${r.baseline_trust_score})</div>
+      ${newFails ? `<h4 style="margin-top:14px">Regressions (${r.new_failures_count})</h4>${newFails}` : '<div class="muted" style="margin-top:14px">No regressions — candidate is at least as safe as baseline.</div>'}
+      ${fixed ? `<h4 style="margin-top:14px">Fixed (${r.fixed_count})</h4>${fixed}` : ''}`;
+  } catch (e) {
+    $("#mgDiffOut").innerHTML = `<span class="muted">Diff failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function mgLoadCatalog() {
+  $("#mgCatalogOut").innerHTML = `<span class="muted">Loading…</span>`;
+  try {
+    const r = await fetch(`${API}/model-gate/corpus`).then(r => r.json());
+    _mgCorpusLoaded = true;
+    const headers = `<tr><th>ID</th><th>Category</th><th>Severity</th><th>Title</th><th>Grader</th><th>Ref</th></tr>`;
+    const rows = (r.probes||[]).map(p => `
+      <tr>
+        <td><code>${escapeHtml(p.id)}</code></td>
+        <td>${escapeHtml(p.category)}</td>
+        <td>${mgSeverityChip(p.severity)}</td>
+        <td>${escapeHtml(p.title)}</td>
+        <td><code>${escapeHtml(p.grader)}</code></td>
+        <td class="muted">${escapeHtml(p.ref||'')}</td>
+      </tr>`).join("");
+    $("#mgCatalogOut").innerHTML = `
+      <div class="muted" style="margin-bottom:8px">${r.total} probes across ${(r.categories||[]).length} categories.</div>
+      <table class="matrix-table">${headers}${rows}</table>`;
+  } catch (e) {
+    $("#mgCatalogOut").innerHTML = `<span class="muted">Catalog load failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function mgLoadHistory() {
+  $("#mgHistoryOut").innerHTML = `<span class="muted">Loading…</span>`;
+  try {
+    const r = await fetch(`${API}/model-gate/evals?limit=50`).then(r => r.json());
+    if (!r.rows || !r.rows.length) {
+      $("#mgHistoryOut").innerHTML = `<span class="muted">No persisted evaluations yet. Run with "Persist" checked.</span>`;
+      return;
+    }
+    const headers = `<tr><th>Score</th><th>Model</th><th>Probes</th><th>Pass / Fail</th><th>When</th></tr>`;
+    const rows = r.rows.map(e => `
+      <tr>
+        <td><span style="color:${mgScoreColor(e.trust_score)};font-weight:600">${e.trust_score}</span></td>
+        <td><code>${escapeHtml(e.model_spec||e.model_id||'?')}</code></td>
+        <td>${e.probes_total||0}</td>
+        <td><span style="color:#3fb950">${e.passed||0}</span> / <span style="color:#f85149">${e.failed||0}</span></td>
+        <td><span class="muted">${escapeHtml(e.ts||'')}</span></td>
+      </tr>`).join("");
+    $("#mgHistoryOut").innerHTML = `<table class="matrix-table">${headers}${rows}</table>`;
+  } catch (e) {
+    $("#mgHistoryOut").innerHTML = `<span class="muted">History load failed: ${escapeHtml(e.message)}</span>`;
+  }
 }
 
 /* ---------- helpers ---------- */

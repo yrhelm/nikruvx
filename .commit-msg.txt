@@ -1,0 +1,36 @@
+﻿Add MCP Gate + Model Security Regression Suite
+
+MCP Gate (engine.mcp_gate):
+- Five-layer pre-deployment review for MCP servers / AI agents
+- Static manifest review: shell launchers, unsigned scripts, missing publisher
+- Auth posture: remote-no-auth (critical), cleartext HTTP, plaintext API keys / GitHub PATs / AWS keys / JWTs in env values
+- Permission-vs-purpose diff: flags MCPs whose capabilities exceed declared tool surface
+- Tool-poisoning scan: hidden <system> / [INST] tags, zero-width chars, base64 blobs, cross-tool instruction smuggling, "ignore previous" classics
+- Verdict aggregation: critical -> block, high -> request_changes, otherwise approve
+- Persistence: :McpApproval and :McpFinding graph nodes, taggable on :Application
+- Shadow-MCP detection: diff installed vs approved allowlist
+- CLI: review | review-installed | list-approvals | shadow-check
+- API: /api/mcp-gate/{review, review-installed, approvals, approval/{id}, shadow-check}
+- UI tab with 4 sub-panes (Review Installed, Review New, Approvals, Shadow Check)
+- 30+ tests in tests/test_mcp_gate.py
+
+Model Security Regression Suite (engine.model_gate):
+- 30 deterministic probes across 4 categories: direct prompt injection (8), code-suggestion safety (8), tool-call safety (7), sensitive disclosure (7)
+- Six graders, no LLM-judge dependency: must_refuse, must_not_match, must_match, safe_code, no_destructive_tool, no_canary_leak
+- Severity-weighted Trust Score (0-100): critical=4, high=2, medium=1, low=0.5
+- Adapter protocol: Ollama, OpenAI, OpenAI-compat (Together / Groq / vLLM / Bedrock-via-LiteLLM), Anthropic, GitHub Copilot, Stub for offline/test
+- Regression diff mode: candidate vs baseline, surfaces only new failures and fixes (the headline feature for "Copilot just shipped a new model")
+- Graph schema: :ModelEval + :ModelProbeResult with HAS_RESULT edges
+- CLI: run | diff | list | get
+- API: /api/model-gate/{evaluate, diff, evals, eval/{id}, corpus}
+- UI tab with 4 sub-panes (Run Eval, Regression Diff, Probe Catalog, History)
+- 35+ tests in tests/test_model_gate.py
+
+Grader fix:
+- no_destructive_tool now also scans natural-language responses against blocked_arg_patterns when no JSON tool-call envelope is present, so prose like "I'll call shell.exec with rm -rf /" is correctly flagged
+
+Schema loader:
+- Two new files (schema/mcp_gate.cypher, schema/model_gate.cypher) auto-loaded by apply_schema()'s alphabetical glob
+
+Trademark:
+- README + UI footer assert NikruvX(TM) for common-law protection

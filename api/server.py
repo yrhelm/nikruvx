@@ -16,6 +16,7 @@ Endpoints:
   GET  /api/stats                -> Top-level counts for the home dashboard
 """
 from __future__ import annotations
+import json
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,9 @@ from engine import llm, dna, patch_twin, defense, posture
 from engine import healthcare, hipaa, sra_report, clinical_runner, model_card
 from engine import trust_scoring, supply_chain, threat_feeds, phi_lineage
 from engine import ai_vendor_config as _vendor_audit
+from engine import mcp_gate
+from engine import model_gate as _model_gate
+from engine import model_corpus as _model_corpus
 from ingest.sbom import scan as sbom_scan
 from ingest.telemetry import ingest_kev, kev_summary
 from ingest.policies import parse_any as parse_policy
@@ -1025,6 +1029,151 @@ class _VendorAuditRequest(BaseModel):
 def lineage_audit_vendor(req: _VendorAuditRequest) -> dict:
     """Audit one AI-vendor config dict against the canonical rule catalog."""
     return _vendor_audit.audit(req.vendor_id, req.config)
+
+
+# --------------------------- MCP Gate --------------------------------------
+class _McpReviewRequest(BaseModel):
+    config: dict[str, Any]
+    persist: bool = False
+
+
+class _McpShadowRequest(BaseModel):
+    approved: list[str] = []
+
+
+@app.post("/api/mcp-gate/review")
+def mcp_gate_review(req: _McpReviewRequest) -> dict:
+    """Run the static review against one MCP config dict (or full
+    claude_desktop_config.json with `mcpServers`)."""
+    review = (mcp_gate.review_dict_from_json(json.dumps(req.config))
+              if "mcpServers" in req.config
+              else mcp_gate.review_config(req.config))
+    if req.persist:
+        mcp_gate.persist(review)
+    from dataclasses import asdict
+    return {
+        "verdict": review.verdict,
+        "target_name": review.target_name,
+        "auth_method": review.auth_method,
+        "transport": review.transport,
+        "inferred_permissions": review.inferred_permissions,
+        "declared_tools": review.declared_tools,
+        "findings": [asdict(f) for f in review.findings],
+        "worst_severity": review.worst_severity(),
+    }
+
+
+@app.post("/api/mcp-gate/review-installed")
+def mcp_gate_review_installed(persist: bool = False) -> dict:
+    reviews = mcp_gate.review_inventory()
+    if persist:
+        for r in reviews:
+            mcp_gate.persist(r)
+    from dataclasses import asdict
+    return {
+        "count": len(reviews),
+        "reviews": [{
+            "target_name": r.target_name,
+            "verdict": r.verdict,
+            "auth_method": r.auth_method,
+            "transport": r.transport,
+            "worst_severity": r.worst_severity(),
+            "findings_count": len(r.findings),
+            "findings": [asdict(f) for f in r.findings],
+        } for r in reviews],
+    }
+
+
+@app.get("/api/mcp-gate/approvals")
+def mcp_gate_approvals(status: str | None = None) -> dict:
+    rows = mcp_gate.list_approvals(status=status)
+    return {"count": len(rows), "rows": rows}
+
+
+@app.get("/api/mcp-gate/approval/{target_name}")
+def mcp_gate_approval(target_name: str) -> dict:
+    out = mcp_gate.get_approval(target_name)
+    if not out:
+        raise HTTPException(status_code=404, detail="No approval found")
+    return out
+
+
+@app.post("/api/mcp-gate/shadow-check")
+def mcp_gate_shadow(req: _McpShadowRequest) -> dict:
+    return mcp_gate.shadow_check(req.approved)
+
+
+# --------------------------- Model Gate ------------------------------------
+class _ModelEvalRequest(BaseModel):
+    model_spec: str
+    categories: list[str] | None = None
+    severities: list[str] | None = None
+    probe_ids: list[str] | None = None
+    parallel: int = 4
+    persist: bool = False
+
+
+class _ModelDiffRequest(BaseModel):
+    candidate_spec: str
+    baseline_spec: str
+    categories: list[str] | None = None
+    parallel: int = 4
+    persist: bool = False
+
+
+@app.post("/api/model-gate/evaluate")
+def model_gate_evaluate(req: _ModelEvalRequest) -> dict:
+    """Run the regression suite (or filtered subset) against one model spec."""
+    from dataclasses import asdict
+    res = _model_gate.evaluate(
+        req.model_spec,
+        categories=req.categories,
+        severities=req.severities,
+        probe_ids=req.probe_ids,
+        parallel=req.parallel,
+        persist_result=req.persist,
+    )
+    return asdict(res)
+
+
+@app.post("/api/model-gate/diff")
+def model_gate_diff(req: _ModelDiffRequest) -> dict:
+    """Run the suite against a candidate and a baseline; return only the
+    deltas (new failures + fixed)."""
+    cand = _model_gate.evaluate(req.candidate_spec, categories=req.categories,
+                                 parallel=req.parallel,
+                                 persist_result=req.persist)
+    base = _model_gate.evaluate(req.baseline_spec, categories=req.categories,
+                                 parallel=req.parallel,
+                                 persist_result=req.persist)
+    return _model_gate.regression_diff(cand, base)
+
+
+@app.get("/api/model-gate/evals")
+def model_gate_evals(limit: int = 50) -> dict:
+    rows = _model_gate.list_evals(limit=limit)
+    return {"count": len(rows), "rows": rows}
+
+
+@app.get("/api/model-gate/eval/{eval_id}")
+def model_gate_eval(eval_id: str) -> dict:
+    out = _model_gate.get_eval(eval_id)
+    if not out:
+        raise HTTPException(status_code=404, detail="No such eval")
+    return out
+
+
+@app.get("/api/model-gate/corpus")
+def model_gate_corpus() -> dict:
+    """Return the probe catalog so the UI can render category filters."""
+    return {
+        "total": len(_model_corpus.CORPUS),
+        "categories": _model_corpus.categories_in_corpus(),
+        "probes": [{
+            "id": p.id, "category": p.category, "severity": p.severity,
+            "title": p.title, "grader": p.grader, "ref": p.ref,
+        } for p in _model_corpus.CORPUS],
+    }
 
 
 @app.get("/api/lineage/vendor-rules")
