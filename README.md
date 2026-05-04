@@ -15,20 +15,83 @@ code we can fetch. AI/ML threats from **MITRE ATLAS** and the **OWASP LLM Top
 10** are integrated as first-class citizens alongside traditional CVEs.
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│  CVE ──CLASSIFIED_AS──▶ CWE ──CHILD_OF──▶ CWE                     │
-│   │                       │                                       │
-│   │MAPS_TO                │MAPS_TO                                │
-│   ▼                       ▼                                       │
-│  OSILayer (1..7)         OSILayer                                 │
-│   │                                                               │
-│   │AFFECTS                ◀──RELATED_TO── AIThreat (ATLAS / LLM)  │
-│   ▼                                                               │
-│  Package (npm / PyPI / Maven / Go / Cargo / RubyGems / OS)        │
-│   │HAS_POC                                                        │
-│   ▼                                                               │
-│  PoC (ExploitDB / GitHub / trickest / nomi-sec)                   │
-└──────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│  CORE VULNERABILITY SPINE  +  ASSET INVENTORY                            │
+├──────────────────────────────────────────────────────────────────────────┤
+│  CVE ──CLASSIFIED_AS──▶ CWE ──CHILD_OF──▶ CWE                            │
+│   │                      │                                               │
+│   │MAPS_TO               │MAPS_TO       ◀──RELATED_TO── AIThreat         │
+│   ▼                      ▼                            (MITRE ATLAS /     │
+│  OSILayer (1..7)        OSILayer                       OWASP LLM Top 10) │
+│   │                                                                      │
+│   │AFFECTS                                                               │
+│   ▼                                                                      │
+│  Package ◀──DEPENDS_ON── Application                                     │
+│  (npm / PyPI / Maven /    (1st-party / desktop binary / browser-ext /    │
+│   Go / Cargo /             IDE-ext / mcp-server)                         │
+│   RubyGems / OS)            │                                            │
+│   │                         │ trust_score, mcp_gate_status               │
+│   │HAS_POC                                                               │
+│   ▼                                                                      │
+│  PoC (ExploitDB / GitHub / trickest / nomi-sec)                          │
+└──────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│  POSTURE  /  POLICY VALIDATION                                           │
+├──────────────────────────────────────────────────────────────────────────┤
+│  Policy ──HAS──▶ Control ──MITIGATES──▶ Capability                       │
+│  (AWS-IAM / AWS-WAF /                   (RCE / AUTH_BYPASS / MITM_NET /  │
+│   Azure-CA / Intune /                    DATA_EXFIL / PHI_DISCLOSURE /   │
+│   GCP-IAM / Org Policy /                 LATERAL_LAN / DECRYPT_TLS /…)   │
+│   ModSecurity / Cloudflare /                                             │
+│   iptables / nftables / pfSense)                                         │
+└──────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│  PHI LINEAGE  (HIPAA / BAA AUDIT)                                        │
+├──────────────────────────────────────────────────────────────────────────┤
+│  PHISource ──FED──▶ Prompt ──SENT_VIA──▶ Application ──CALLS──▶ AIModel  │
+│  (EMR / EHR /          │ CONTAINS                                  │     │
+│   lab / claims /       ▼                                  HOSTED_BY      │
+│   portal / voice)  PHIElement                                      ▼     │
+│                    (Safe Harbor 18                              AIVendor │
+│                     identifier types)                              │     │
+│                                                            OPERATES_IN   │
+│                                                                    ▼     │
+│                    Response ◀──RETURNED── AIModel                Region  │
+│                        │ CONTAINS                                        │
+│                        │                                                 │
+│                        ├──LOGGED_IN──▶ Sink ──STORED_IN──▶ Region        │
+│                        ▼               ──GOVERNED_BY──▶ RetentionPolicy  │
+│                    PHIElement                                            │
+│                                                                          │
+│  BAA ──COVERS──▶ AIVendor          BAA ──INCLUDES_TERM──▶ BAATerm        │
+│                                                          (12 canonical;  │
+│                                                           HIPAA §164.x / │
+│                                                           45 CFR / GDPR) │
+│                                                                          │
+│  Every movement edge: { ts, evidence_grade, evidence_ref, confidence }   │
+└──────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│  MCP GATE  +  MODEL SECURITY REGRESSION                                  │
+├──────────────────────────────────────────────────────────────────────────┤
+│  Application ──reviewed──▶ McpApproval ──HAS_FINDING──▶ McpFinding       │
+│  (mcp_server)              { status: approve |          { check_id,      │
+│                              request_changes |            severity,      │
+│                              block }                      evidence,      │
+│                                                           remediation }  │
+│                                                                          │
+│  ModelEval ──HAS_RESULT──▶ ModelProbeResult                              │
+│  { trust_score (0-100),    { probe_id, category, severity,               │
+│    model_spec,               passed, reason, response_excerpt }          │
+│    passed / failed,                                                      │
+│    by_category }           Categories:                                   │
+│                              direct_prompt_injection,                    │
+│                              code_suggestion_safety,                     │
+│                              tool_call_safety,                           │
+│                              sensitive_disclosure                        │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## What makes this unique
