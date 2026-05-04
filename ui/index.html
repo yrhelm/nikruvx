@@ -30,6 +30,7 @@
     <button class="mode-btn" data-mode="redteam">Red-Team</button>
     <button class="mode-btn" data-mode="hipaa">HIPAA / Compliance</button>
     <button class="mode-btn" data-mode="clinical">Clinical AI</button>
+    <button class="mode-btn" data-mode="lineage">PHI Lineage</button>
     <button class="mode-btn" data-mode="kev">Live KEV</button>
   </nav>
 </header>
@@ -281,6 +282,77 @@
       <h2>Live KEV — <span class="muted">CISA Known Exploited Vulnerabilities</span></h2>
       <button id="kevRefresh">Refresh from CISA</button>
       <div id="kevResult" class="kev-result"></div>
+    </div>
+  </section>
+
+  <section id="lineageMode" class="mode-overlay" hidden>
+    <div class="mode-inner">
+      <h2>PHI Lineage — <span class="muted">vendor coverage, broken-BAA audit, replay, vendor config</span></h2>
+      <div class="hero-stats" id="lineageStats" style="margin-bottom:14px">
+        <div class="stat"><div class="num" id="lnPrompts">—</div><div class="lbl">Prompts</div></div>
+        <div class="stat"><div class="num" id="lnPhi">—</div><div class="lbl">PHI Elements</div></div>
+        <div class="stat"><div class="num" id="lnVendors">—</div><div class="lbl">AI Vendors</div></div>
+        <div class="stat"><div class="num" id="lnBaas">—</div><div class="lbl">BAAs</div></div>
+        <div class="stat"><div class="num" id="lnSinks">—</div><div class="lbl">Sinks</div></div>
+      </div>
+      <nav class="sub-tabs">
+        <button class="sub-btn active" data-sub="coverage">Vendor Coverage</button>
+        <button class="sub-btn" data-sub="broken">Broken BAA</button>
+        <button class="sub-btn" data-sub="audit">Vendor Config Audit</button>
+        <button class="sub-btn" data-sub="replay">Replay</button>
+      </nav>
+
+      <div id="subCoverage" class="sub-pane">
+        <div class="rt-row">
+          <button id="lnSeedTerms">Seed canonical BAA terms</button>
+          <button id="lnRefreshCoverage">Refresh</button>
+          <button id="lnInspectMcp">Inspect MCP servers</button>
+        </div>
+        <div id="lnCoverageTable" class="muted">Click "Refresh" to load vendor coverage.</div>
+      </div>
+
+      <div id="subBroken" class="sub-pane" hidden>
+        <div class="rt-row">
+          <label>Window (hours)
+            <input id="lnWindow" type="number" value="24" min="1" max="720" style="width:80px"/>
+          </label>
+          <button id="lnRefreshBroken">Refresh</button>
+        </div>
+        <div id="lnBrokenList" class="muted">Click "Refresh" to load broken-BAA findings.</div>
+      </div>
+
+      <div id="subAudit" class="sub-pane" hidden>
+        <div class="rt-row">
+          <label>Vendor
+            <select id="lnAuditVendor">
+              <option value="openai">OpenAI</option>
+              <option value="anthropic">Anthropic</option>
+              <option value="azure-openai">Azure OpenAI</option>
+              <option value="aws-bedrock">AWS Bedrock</option>
+            </select>
+          </label>
+          <button id="lnLoadRules">Load rule catalog</button>
+          <button id="lnRunAudit">Run audit</button>
+        </div>
+        <div class="muted" style="margin:8px 0">
+          Paste a config JSON (the keys the auditor reads — see rule catalog).
+          Example for OpenAI:
+          <code>{"api_base":"https://api.openai.com","zero_data_retention":true,"baa_signed":true,"organization_id":"org-xxx","training_excluded":true}</code>
+        </div>
+        <textarea id="lnAuditConfig" rows="6" style="width:100%"
+          placeholder='{"zero_data_retention": true, "baa_signed": true, ...}'></textarea>
+        <div id="lnAuditOut" class="rt-result" style="margin-top:12px;display:none"></div>
+      </div>
+
+      <div id="subReplay" class="sub-pane" hidden>
+        <div class="rt-row">
+          <input id="lnReplayId" type="text" placeholder="prompt:<id> from a finding" style="flex:1;min-width:260px"/>
+          <button id="lnRunReplay">Replay</button>
+        </div>
+        <div id="lnReplayOut" class="muted" style="margin-top:12px">
+          Click a row in the Broken BAA tab to populate the prompt id, or paste one here.
+        </div>
+      </div>
     </div>
   </section>
 

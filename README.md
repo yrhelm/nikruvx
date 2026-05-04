@@ -45,6 +45,14 @@ code we can fetch. AI/ML threats from **MITRE ATLAS** and the **OWASP LLM Top
    and GitHub code-search — with raw snippets stored in the graph.
 5. **Cross-ecosystem package coverage** via OSV.dev + GHSA, so the same CVE
    shows you every npm/PyPI/Maven/Go/Cargo/RubyGems/OS package it affects.
+6. **PHI Lineage Tracer** — graph-native record of every prompt/response that
+   touched PHI, with the BAA status checked at each AI vendor hop and audit
+   queries for "find every uncovered flow in the last 24h". Five live ingesters
+   (OpenAI / Anthropic SDK shim, OpenAI-compatible HTTP proxy, AWS Bedrock
+   CloudTrail, Azure OpenAI diagnostic logs, MCP server inspector).
+7. **AI Vendor Configuration Auditor** — 21 rules across OpenAI, Anthropic,
+   AWS Bedrock, Azure OpenAI; each rule maps to one of 12 canonical BAA terms
+   with HIPAA / 45 CFR / contractual citations and a copy-pasteable remediation.
 
 ## Prerequisites
 
@@ -679,6 +687,171 @@ refresh runs in parallel and rebuilds the index atomically. Set
 per hour.
 
 Endpoints: `GET /api/threat-feeds/status`, `POST /api/threat-feeds/refresh`.
+
+---
+
+## PHI Lineage Tracer
+
+The most asked-for question in healthcare AI — *"where did that patient's data
+just go?"* — modeled as a graph. Every LLM call becomes a path from PHI source
+through prompt → application → model → vendor → region → response → sinks,
+with the BAA status checked at the vendor hop. Raw PHI text is never persisted;
+only counts per HIPAA Safe Harbor identifier type (§164.514(b)(2)(i)(A)–(R))
+plus a sha256 of the normalized payload for incident replay.
+
+### Graph schema
+
+`schema/phi_lineage.cypher` (loaded automatically by `apply_schema()` — the
+loader globs every `*.cypher` in `schema/`):
+
+| Label              | Purpose                                                         |
+|--------------------|-----------------------------------------------------------------|
+| `:PHISource`       | EMR/EHR/lab feed/claims/portal/voice transcript                 |
+| `:PHIElement`      | One Safe Harbor identifier type seen in a prompt/response       |
+| `:Subject`         | Pseudonymized patient (hashed pseudo_id; never raw)             |
+| `:Actor`           | Clinician / patient / autonomous agent / admin                  |
+| `:LineageSession`  | Conversation that ties prompts together                         |
+| `:Prompt` / `:Response` | One per call; payload_hash + ts; transient but indispensable for replay |
+| `:Application`     | Reuses the Asset Inventory node                                 |
+| `:AIModel`         | `openai:gpt-4o-2024-11-20`, etc.                                |
+| `:AIVendor`        | OpenAI / Anthropic / aws-bedrock / azure-openai (separate from `:Vendor`) |
+| `:Region`          | `us-east-1`, `eastus2`, `local`, ...                            |
+| `:Sink`            | log / cache / vector_store / training_corpus / trace            |
+| `:RetentionPolicy` | days-based retention rule                                       |
+| `:BAA`             | Business Associate Agreement covering one or more vendors       |
+| `:BAATerm`         | Canonical clause (12 seeded — see below)                        |
+| `:Evidence`        | Provenance pointer (sha256 / url / contract clause)             |
+
+Every movement edge carries `ts`, `evidence_grade ∈ {OBSERVED, ATTESTED,
+DECLARED, INFERRED}`, `evidence_ref`, and `confidence (0-100)` so any
+audit answer can be defended with provenance, not just a query result.
+
+### Canonical BAA terms (seeded once)
+
+| term_id                   | clause                                                   | citation                          |
+|---------------------------|----------------------------------------------------------|-----------------------------------|
+| `encryption_at_rest`      | Encryption of PHI at rest (AES-256+)                     | 45 CFR §164.312(a)(2)(iv)         |
+| `encryption_in_transit`   | TLS 1.2+ for all PHI in transit                          | 45 CFR §164.312(e)(1)             |
+| `us_only_region`          | Processing locked to US regions                          | BAA contract / data residency     |
+| `no_training_use`         | PHI excluded from model training / fine-tuning           | 45 CFR §164.502(b)                |
+| `zero_retention`          | Vendor zero-retention mode (or ≤ 30 days)                | BAA contract                      |
+| `audit_logging`           | Vendor produces auditable access logs                    | 45 CFR §164.312(b)                |
+| `subprocessor_disclosure` | Sub-processor list disclosed and approved                | 45 CFR §164.504(e)(2)(ii)(D)      |
+| `breach_notification`     | Vendor agrees to ≤ 60-day breach notification            | 45 CFR §164.410                   |
+| `baa_signed`              | BAA executed and current                                 | 45 CFR §164.504(e)                |
+| `minimum_necessary`       | Vendor handles only minimum-necessary PHI                | 45 CFR §164.502(b)                |
+| `right_to_delete`         | Vendor supports patient-record deletion / unlearning     | GDPR Art.17 / state law           |
+| `hitech_audit`            | HITECH Act audit-trail retention (≥ 6 years)             | 45 CFR §164.316                   |
+
+### Five live ingesters
+
+All ingesters emit the same `engine.phi_lineage.CallEvent` envelope and fail
+open — a Neo4j outage will not break the LLM call path.
+
+| Ingester                                    | What it captures                                                        | How to run |
+|---------------------------------------------|-------------------------------------------------------------------------|------------|
+| `ingest.lineage.sdk_shim`                   | OpenAI / Anthropic Python SDK calls (monkey-patched)                    | `from ingest.lineage.sdk_shim import install; install()` |
+| `ingest.lineage.openai_proxy`               | Any OpenAI-compatible HTTP client (configure `OPENAI_BASE_URL`)         | `uvicorn ingest.lineage.openai_proxy:app --port 8800` |
+| `ingest.lineage.bedrock_cloudtrail`         | AWS Bedrock InvokeModel events from CloudTrail JSON / .json.gz          | `python -m ingest.lineage.bedrock_cloudtrail --path ./trail/` |
+| `ingest.lineage.azure_openai`               | Azure Monitor diagnostic logs (RequestResponse / Audit)                 | `python -m ingest.lineage.azure_openai --path "./diag/*.jsonl"` |
+| `ingest.lineage.mcp_inspector`              | Installed MCP servers — tags ones whose tool descriptions imply PHI     | `python -m ingest.lineage.mcp_inspector --emit-call-events` |
+
+### PHI detector (Safe Harbor 18-identifier scanner)
+
+`engine.phi_detector.summarize(text)` returns counts per identifier type for
+SSN, phone, email, URL, IPv4/IPv6, ZIP, dates (ISO + full), MRN, patient_id,
+account, credit_card (Luhn-validated), VIN, license, device_serial, ICD-10,
+plus name + DOB heuristics. Conservative regex set — designed to signal
+*that* PHI is present, not to be a full DLP. Counts are persisted; raw text
+never is.
+
+### Audit operations
+
+| Operation                                     | Endpoint                                       | What it does                                                      |
+|-----------------------------------------------|------------------------------------------------|-------------------------------------------------------------------|
+| Record one call                               | `POST /api/lineage/event`                      | Persist a normalized `CallEvent`                                  |
+| Find broken BAA chains                        | `GET /api/lineage/broken-baa?window_hours=24`  | PHI flows whose terminal vendor lacks BAA or required terms       |
+| Replay an incident                            | `GET /api/lineage/replay/{prompt_id}`          | Full hop list with BAA tag annotated at every `:AIVendor` node    |
+| Vendor coverage report                        | `GET /api/lineage/coverage`                    | Per-vendor PHI-call count + missing required terms                |
+| Stats / catalog seed / vendor & BAA register  | `GET /api/lineage/stats`, `POST .../seed-terms`, `POST .../vendor`, `POST .../baa` | |
+| MCP inspector                                 | `POST /api/lineage/inspect-mcp`                | Walk installed MCP servers; flag PHI signals; create graph stubs  |
+
+### Quick smoke test
+
+```powershell
+# 1. Apply schema (auto-includes phi_lineage.cypher) and seed BAA terms
+python -c "from engine.graph import apply_schema; apply_schema()"
+python -m engine.phi_lineage seed-terms
+
+# 2. Drive a synthetic call through and verify the audit query flags it
+python -c "from engine.phi_lineage import CallEvent, record_call; record_call(CallEvent(prompt_text='Patient Mrs. Jane Doe MRN 7829341 on lisinopril.', response_text='Monitor BP weekly.', actor_id='clinician:doe@hosp.org', application_name='clinical-copilot', model_name='gpt-4o-2024-11-20', vendor_id='openai', vendor_name='OpenAI', region_code='us-east-1', source_name='epic-emr-prod', sinks=[{'id':'openai-traffic-logs','kind':'log','encrypted':True}]))"
+python -m engine.phi_lineage broken
+
+# 3. Register an OpenAI BAA and re-run — broken list should now be empty
+python -c "from engine.phi_lineage import register_vendor, register_baa; register_vendor(vendor_id='openai', name='OpenAI', operates_in_regions=['us-east-1']); register_baa(baa_id='baa-openai-2026', counterparty_vendor_id='openai', effective='2026-01-01', expires='2027-01-01', term_ids=['baa_signed','encryption_at_rest','encryption_in_transit','us_only_region','no_training_use','zero_retention'])"
+python -m engine.phi_lineage broken
+```
+
+UI: open the **PHI Lineage** tab. Four sub-panes: **Vendor Coverage**,
+**Broken BAA**, **Vendor Config Audit**, **Replay**. Click any row in the
+Broken BAA list to populate the Replay tab and see the full prompt-to-sink
+hop chain with BAA tags at every vendor hop.
+
+---
+
+## AI Vendor Configuration Auditor
+
+Sits next to PHI Lineage. Where the lineage tracer answers "where did the
+data go?", this answers "is this vendor configured the way the BAA requires?".
+21 rules across the four major AI vendors; each rule maps to one of the 12
+canonical BAA terms with citation + remediation.
+
+| Vendor              | Rules | Sample finding                                                                     |
+|---------------------|-------|------------------------------------------------------------------------------------|
+| `openai`            | 5     | Zero-Data-Retention not enabled; OPENAI_ORG_ID missing; api_base must be HTTPS     |
+| `anthropic`         | 4     | `anthropic-beta: zero-retention` header missing; BAA not on file                   |
+| `aws-bedrock` (and per-publisher: `anthropic-bedrock`, `amazon-bedrock`) | 6 | Non-US region; KMS aws/bedrock managed key; no Guardrail; PrivateLink missing     |
+| `azure-openai`      | 6     | publicNetworkAccess=Enabled; CMK encryption off; no diagnostic logs to Log Analytics |
+
+Each finding returns:
+
+```json
+{
+  "rule_id": "openai_zdr_enabled",
+  "status": "fail",                  // pass | fail | unknown
+  "observed": false,
+  "baa_term": "zero_retention",
+  "title": "Zero-Data-Retention enabled on the OpenAI organization",
+  "citation": "BAA contract",
+  "remediation": "Email OpenAI sales for ZDR enrollment; set `x-data-policy: zero-retention` if your org is enrolled.",
+  "severity": "critical"
+}
+```
+
+### Parsers (`ingest/ai_vendor_config.py`)
+
+Four pure-Python parsers normalize raw vendor sources into the audit dict:
+
+| Parser                          | Source                                                                          |
+|---------------------------------|---------------------------------------------------------------------------------|
+| `parse_openai_env()`            | `OPENAI_*` env vars + optional account JSON snapshot                            |
+| `parse_anthropic_env()`         | `ANTHROPIC_*` env vars + optional account JSON snapshot                         |
+| `parse_azure_openai_arm()`      | `az cognitiveservices account show` JSON + diagnostic-settings list             |
+| `parse_bedrock_config()`        | `aws bedrock get-model-invocation-logging-configuration` + VPC endpoints + region |
+
+Plus four `audit_*_from_*` convenience helpers that pipe parser → audit.
+
+### Endpoints
+
+```
+POST /api/lineage/audit-vendor          # body: {"vendor_id": "...", "config": {...}}
+GET  /api/lineage/vendor-rules?vendor_id=openai
+```
+
+Or interactively from the **Vendor Config Audit** sub-tab in the UI: pick a
+vendor, click **Load rule catalog** to see what's checked, paste a config
+JSON, click **Run audit** for the pass/fail/unknown summary with per-finding
+remediation cards.
 
 ---
 

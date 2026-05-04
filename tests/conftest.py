@@ -81,6 +81,11 @@ def fake_graph(monkeypatch):
     """
     Override `engine.graph.run_read` and `run_write` with a tiny in-memory
     fake. Tests can pre-seed `data` to control what queries return.
+
+    Also patches the same names on every already-imported engine/ingest
+    module that did `from .graph import run_read, run_write` at module
+    load (those modules captured their own bindings to the originals,
+    so patching only `engine.graph` would miss them).
     """
     state = {"reads": [], "writes": [], "data": []}
 
@@ -94,6 +99,19 @@ def fake_graph(monkeypatch):
     from engine import graph as g
     monkeypatch.setattr(g, "run_read", _run_read)
     monkeypatch.setattr(g, "run_write", _run_write)
+
+    # Sweep every loaded engine.* / ingest.* module that imported these
+    # names at load time and rebind them in-place.
+    for mod_name, mod in list(sys.modules.items()):
+        if mod is None or mod is g:
+            continue
+        if not (mod_name.startswith("engine.") or mod_name.startswith("ingest.")):
+            continue
+        if getattr(mod, "run_read", None) is not None:
+            monkeypatch.setattr(mod, "run_read", _run_read, raising=False)
+        if getattr(mod, "run_write", None) is not None:
+            monkeypatch.setattr(mod, "run_write", _run_write, raising=False)
+
     return state
 
 

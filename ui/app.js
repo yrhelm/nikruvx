@@ -35,7 +35,7 @@ function initModes() {
 }
 function switchMode(mode) {
   document.querySelectorAll(".mode-btn").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
-  ["sbomMode","redteamMode","kevMode","postureMode","hipaaMode","clinicalMode","inventoryMode","supplychainMode"].forEach(id => {
+  ["sbomMode","redteamMode","kevMode","postureMode","hipaaMode","clinicalMode","inventoryMode","supplychainMode","lineageMode"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.hidden = id !== `${mode}Mode`;
   });
@@ -45,6 +45,7 @@ function switchMode(mode) {
   if (mode === "clinical")     initClinical();
   if (mode === "inventory")    initInventory();
   if (mode === "supplychain")  initSupplyChain();
+  if (mode === "lineage")      initLineage();
 }
 
 /* ---------- bootstrap ---------- */
@@ -1148,4 +1149,239 @@ async function drawGraph(cveId) {
 /* ---------- helpers ---------- */
 function escapeHtml(s) {
   return (s || "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+}
+
+/* ---------- PHI Lineage ---------- */
+let _lineageInited = false;
+function initLineage() {
+  if (_lineageInited) { lineageRefreshStats(); return; }
+  _lineageInited = true;
+
+  // sub-tab routing inside the Lineage section
+  document.querySelectorAll("#lineageMode .sub-btn").forEach(btn => {
+    btn.addEventListener("click", () => switchLineageSub(btn.dataset.sub));
+  });
+
+  $("#lnSeedTerms").addEventListener("click", lineageSeedTerms);
+  $("#lnRefreshCoverage").addEventListener("click", lineageLoadCoverage);
+  $("#lnInspectMcp").addEventListener("click", lineageInspectMcp);
+  $("#lnRefreshBroken").addEventListener("click", lineageLoadBroken);
+  $("#lnLoadRules").addEventListener("click", lineageLoadRules);
+  $("#lnRunAudit").addEventListener("click", lineageRunAudit);
+  $("#lnRunReplay").addEventListener("click", lineageRunReplay);
+
+  lineageRefreshStats();
+  lineageLoadCoverage();
+}
+
+function switchLineageSub(sub) {
+  document.querySelectorAll("#lineageMode .sub-btn")
+    .forEach(b => b.classList.toggle("active", b.dataset.sub === sub));
+  ["subCoverage","subBroken","subAudit","subReplay"].forEach(id => {
+    const want = "sub" + sub.charAt(0).toUpperCase() + sub.slice(1);
+    const el = document.getElementById(id);
+    if (el) el.hidden = id !== want;
+  });
+  if (sub === "broken") lineageLoadBroken();
+}
+
+async function lineageRefreshStats() {
+  try {
+    const s = await fetch(`${API}/lineage/stats`).then(r => r.json());
+    $("#lnPrompts").textContent  = s.prompts ?? 0;
+    $("#lnPhi").textContent      = s.phi_elements ?? 0;
+    $("#lnVendors").textContent  = s.vendors ?? 0;
+    $("#lnBaas").textContent     = s.baas ?? 0;
+    $("#lnSinks").textContent    = s.sinks ?? 0;
+  } catch (e) { console.error("lineage stats", e); }
+}
+
+async function lineageSeedTerms() {
+  try {
+    const r = await fetch(`${API}/lineage/seed-terms`, {method:"POST"}).then(r=>r.json());
+    alert(`Seeded ${r.seeded_terms} BAA terms`);
+  } catch (e) { alert(`seed failed: ${e.message}`); }
+}
+
+async function lineageInspectMcp() {
+  $("#lnCoverageTable").innerHTML = `<span class="muted">Inspecting MCP servers…</span>`;
+  try {
+    const r = await fetch(`${API}/lineage/inspect-mcp?emit_call_events=false`,
+                          {method:"POST"}).then(r=>r.json());
+    const items = (r.phi_handling_mcps || []).map(m =>
+      `<div class="inv-row">
+         <b>${escapeHtml(m.name)}</b>
+         <span class="muted"> — signals: ${(m.phi_signals||[]).join(", ") || "none"}</span>
+       </div>`).join("");
+    $("#lnCoverageTable").innerHTML = items
+      ? `<h4>PHI-handling MCP servers (${r.total})</h4>${items}`
+      : `<span class="muted">No PHI-handling MCP servers detected. (${r.total||0} scanned)</span>`;
+  } catch (e) {
+    $("#lnCoverageTable").innerHTML = `<span class="muted">Inspect failed: ${escapeHtml(e.message)}</span>`;
+  }
+  lineageRefreshStats();
+}
+
+async function lineageLoadCoverage() {
+  $("#lnCoverageTable").innerHTML = `<span class="muted">Loading coverage…</span>`;
+  try {
+    const r = await fetch(`${API}/lineage/coverage`).then(r=>r.json());
+    if (!r.rows || !r.rows.length) {
+      $("#lnCoverageTable").innerHTML = `<span class="muted">No vendors have seen PHI yet. Drive a synthetic call through the SDK shim or a proxy first.</span>`;
+      return;
+    }
+    const headers = `<tr><th>Vendor</th><th>PHI calls</th><th>BAA</th><th>Missing required terms</th></tr>`;
+    const rows = r.rows.map(v => {
+      const missing = (v.missing_terms||[]).map(t => `<span class="chip" style="background:#3a1212;color:#ffb4b4">${escapeHtml(t)}</span>`).join(" ");
+      const baaCell = v.baa_id
+        ? `<code>${escapeHtml(v.baa_id)}</code>`
+        : `<span class="chip" style="background:#3a1212;color:#ffb4b4">NO_BAA</span>`;
+      return `<tr>
+        <td><b>${escapeHtml(v.vendor_name||v.vendor_id)}</b><br><span class="muted">${escapeHtml(v.vendor_id)}</span></td>
+        <td>${v.phi_calls}</td>
+        <td>${baaCell}</td>
+        <td>${missing || '<span class="muted">— none —</span>'}</td>
+      </tr>`;
+    }).join("");
+    $("#lnCoverageTable").innerHTML =
+      `<table class="matrix-table">${headers}${rows}</table>`;
+  } catch (e) {
+    $("#lnCoverageTable").innerHTML = `<span class="muted">Coverage load failed: ${escapeHtml(e.message)}</span>`;
+  }
+  lineageRefreshStats();
+}
+
+async function lineageLoadBroken() {
+  const hours = parseInt($("#lnWindow").value, 10) || 24;
+  $("#lnBrokenList").innerHTML = `<span class="muted">Loading broken-BAA findings…</span>`;
+  try {
+    const r = await fetch(`${API}/lineage/broken-baa?window_hours=${hours}`).then(r=>r.json());
+    if (!r.rows || !r.rows.length) {
+      $("#lnBrokenList").innerHTML = `<span class="muted">No broken-BAA findings in the last ${hours}h. Either nothing has run, or every PHI flow is properly covered.</span>`;
+      return;
+    }
+    const items = r.rows.map(row => {
+      const missing = (row.missing_terms||[]).map(t =>
+        `<span class="chip" style="background:#3a1212;color:#ffb4b4">${escapeHtml(t)}</span>`).join(" ");
+      const gap = row.gap_kind === "NO_BAA"
+        ? `<span class="chip" style="background:#3a1212;color:#ffb4b4">NO BAA</span>`
+        : `<span class="chip" style="background:#3a3012;color:#ffd479">TERM GAPS</span>`;
+      return `<div class="gap-card" style="cursor:pointer" onclick="lineageJumpToReplay('${escapeHtml(row.prompt_id)}')">
+        <div><b>${escapeHtml(row.vendor||'?')}</b> · model <code>${escapeHtml(row.model||'?')}</code> · ${gap}</div>
+        <div class="muted"><code>${escapeHtml(row.prompt_id)}</code> · ${escapeHtml(row.ts||'')}</div>
+        <div style="margin-top:6px">${missing || '<span class="muted">— covered —</span>'}</div>
+      </div>`;
+    }).join("");
+    $("#lnBrokenList").innerHTML =
+      `<div class="muted" style="margin-bottom:8px">${r.count} finding(s) in the last ${hours}h. Click a row to replay.</div>${items}`;
+  } catch (e) {
+    $("#lnBrokenList").innerHTML = `<span class="muted">Broken-BAA load failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+function lineageJumpToReplay(promptId) {
+  switchLineageSub("replay");
+  $("#lnReplayId").value = promptId;
+  lineageRunReplay();
+}
+
+async function lineageLoadRules() {
+  const vid = $("#lnAuditVendor").value;
+  $("#lnAuditOut").style.display = "block";
+  $("#lnAuditOut").innerHTML = `<span class="muted">Loading rule catalog…</span>`;
+  try {
+    const r = await fetch(`${API}/lineage/vendor-rules?vendor_id=${encodeURIComponent(vid)}`).then(r=>r.json());
+    const rows = r.rules.map(rule =>
+      `<tr>
+         <td><code>${escapeHtml(rule.rule_id)}</code></td>
+         <td>${escapeHtml(rule.title)}</td>
+         <td><span class="chip">${escapeHtml(rule.severity)}</span></td>
+         <td><code>${escapeHtml(rule.baa_term)}</code></td>
+         <td class="muted">${escapeHtml(rule.citation)}</td>
+       </tr>`).join("");
+    $("#lnAuditOut").innerHTML = `<h4>${vid} — ${r.count} rules</h4>
+      <table class="matrix-table"><tr><th>ID</th><th>Title</th><th>Severity</th><th>BAA Term</th><th>Citation</th></tr>${rows}</table>`;
+  } catch (e) {
+    $("#lnAuditOut").innerHTML = `<span class="muted">Rules load failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function lineageRunAudit() {
+  const vid = $("#lnAuditVendor").value;
+  const raw = $("#lnAuditConfig").value.trim() || "{}";
+  let config;
+  try { config = JSON.parse(raw); }
+  catch (e) { alert("Config is not valid JSON: " + e.message); return; }
+
+  $("#lnAuditOut").style.display = "block";
+  $("#lnAuditOut").innerHTML = `<span class="muted">Auditing ${vid}…</span>`;
+  try {
+    const r = await fetch(`${API}/lineage/audit-vendor`, {
+      method: "POST", headers: {"content-type":"application/json"},
+      body: JSON.stringify({vendor_id: vid, config}),
+    }).then(r=>r.json());
+    const summary = r.summary || {pass:0, fail:0, unknown:0};
+    const findings = (r.findings||[]).map(f => {
+      const sevColor = {critical:"#ff4d6d", high:"#ff8800",
+                        medium:"#ffcc44", low:"#6c7a99"}[f.severity] || "#6c7a99";
+      const statusColor = {pass:"#3fb950", fail:"#f85149", unknown:"#d29922"}[f.status] || "#6c7a99";
+      return `<div class="gap-card">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <span class="chip" style="background:${statusColor};color:#000;font-weight:600">${f.status.toUpperCase()}</span>
+          <span class="chip" style="background:${sevColor};color:#000">${escapeHtml(f.severity)}</span>
+          <b>${escapeHtml(f.title)}</b>
+          <span class="muted"><code>${escapeHtml(f.rule_id)}</code></span>
+        </div>
+        <div class="muted" style="margin-top:6px">BAA term: <code>${escapeHtml(f.baa_term)}</code> · ${escapeHtml(f.citation)}</div>
+        <div style="margin-top:6px">Observed: <code>${escapeHtml(JSON.stringify(f.observed))}</code></div>
+        ${f.status === "fail" ? `<div style="margin-top:6px"><b>Remediation:</b> ${escapeHtml(f.remediation)}</div>` : ""}
+      </div>`;
+    }).join("");
+    $("#lnAuditOut").innerHTML = `
+      <div class="hero-stats" style="margin-bottom:10px">
+        <div class="stat"><div class="num" style="color:#3fb950">${summary.pass||0}</div><div class="lbl">Pass</div></div>
+        <div class="stat"><div class="num" style="color:#f85149">${summary.fail||0}</div><div class="lbl">Fail</div></div>
+        <div class="stat"><div class="num" style="color:#d29922">${summary.unknown||0}</div><div class="lbl">Unknown</div></div>
+      </div>
+      ${findings}`;
+  } catch (e) {
+    $("#lnAuditOut").innerHTML = `<span class="muted">Audit failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function lineageRunReplay() {
+  const pid = $("#lnReplayId").value.trim();
+  if (!pid) { alert("Paste a prompt id first"); return; }
+  $("#lnReplayOut").innerHTML = `<span class="muted">Replaying ${escapeHtml(pid)}…</span>`;
+  try {
+    const r = await fetch(`${API}/lineage/replay/${encodeURIComponent(pid)}`).then(r=>r.json());
+    if (!r.hops || !r.hops.length) {
+      $("#lnReplayOut").innerHTML = `<span class="muted">No hops found for ${escapeHtml(pid)}.</span>`;
+      return;
+    }
+    const labelColor = {
+      "Application":"#2ee59d","AIModel":"#00e5ff","AIVendor":"#b265ff",
+      "Region":"#ffcc44","Sink":"#ff8800","RetentionPolicy":"#6c7a99",
+      "PHIElement":"#ff4d6d","Prompt":"#d6e1f5","Response":"#d6e1f5",
+    };
+    const hops = r.hops.map((h) => {
+      const color = labelColor[h.label] || "#2d4068";
+      const baaTag = h.baa
+        ? `<span class="chip" style="background:#0f2a16;color:#3fb950">BAA ${escapeHtml(h.baa)}</span>`
+        : (h.label === "AIVendor"
+            ? `<span class="chip" style="background:#3a1212;color:#ffb4b4">NO BAA</span>` : "");
+      const terms = (h.baa_terms||[]).map(t => `<span class="chip">${escapeHtml(t)}</span>`).join(" ");
+      return `<div class="tl-step">
+        <span class="chip" style="background:${color};color:#000">${escapeHtml(h.label)}</span>
+        <b>${escapeHtml(h.name||h.id||'')}</b>
+        ${baaTag}
+        ${terms ? `<div style="margin-top:4px">${terms}</div>` : ""}
+      </div>`;
+    }).join("");
+    $("#lnReplayOut").innerHTML = `
+      <div class="muted" style="margin-bottom:8px">Prompt <code>${escapeHtml(r.prompt_id)}</code> · ${escapeHtml(r.ts||'')}</div>
+      <div class="timeline">${hops}</div>`;
+  } catch (e) {
+    $("#lnReplayOut").innerHTML = `<span class="muted">Replay failed: ${escapeHtml(e.message)}</span>`;
+  }
 }

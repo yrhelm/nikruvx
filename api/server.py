@@ -32,7 +32,8 @@ from engine.osi_classifier import classify, LAYER_NAMES
 from engine.attack_chain import build_chain, chains_for_packages
 from engine import llm, dna, patch_twin, defense, posture
 from engine import healthcare, hipaa, sra_report, clinical_runner, model_card
-from engine import trust_scoring, supply_chain, threat_feeds
+from engine import trust_scoring, supply_chain, threat_feeds, phi_lineage
+from engine import ai_vendor_config as _vendor_audit
 from ingest.sbom import scan as sbom_scan
 from ingest.telemetry import ingest_kev, kev_summary
 from ingest.policies import parse_any as parse_policy
@@ -922,6 +923,129 @@ def sc_scan_github(url: str) -> dict:
 def sc_scan_inventory() -> dict:
     """Cross-reference current inventory against the malicious-package feed."""
     return supply_chain.scan_inventory_against_malicious()
+
+
+# --------------------------- PHI Lineage -----------------------------------
+class _LineageEvent(BaseModel):
+    prompt_text: str = ""
+    response_text: str = ""
+    actor_id: str = "unknown"
+    application_name: str = "unknown-app"
+    model_name: str = ""
+    vendor_id: str = ""
+    vendor_name: str = ""
+    region_code: str = ""
+    source_name: str = "unknown-source"
+    sinks: list[dict[str, Any]] = []
+    evidence_grade: str = "OBSERVED"
+    evidence_ref: str = ""
+
+
+class _BAARequest(BaseModel):
+    baa_id: str
+    counterparty_vendor_id: str
+    effective: str
+    expires: str
+    doc_hash: str = ""
+    term_ids: list[str] = []
+
+
+class _VendorRequest(BaseModel):
+    vendor_id: str
+    name: str
+    region_code: str | None = None
+    operates_in_regions: list[str] = []
+    subprocessors: list[str] = []
+
+
+@app.post("/api/lineage/event")
+def lineage_event(ev: _LineageEvent) -> dict:
+    """Record one PHI-lineage event (prompt -> model -> vendor -> sinks)."""
+    return phi_lineage.record_call(phi_lineage.CallEvent(**ev.model_dump()))
+
+
+@app.get("/api/lineage/broken-baa")
+def lineage_broken_baa(window_hours: int = 24, limit: int = 200) -> dict:
+    """PHI flows in the last N hours whose terminal vendor is missing or
+    has missing required BAA terms."""
+    rows = phi_lineage.find_broken_baa_chains(window_hours=window_hours, limit=limit)
+    return {"window_hours": window_hours, "count": len(rows), "rows": rows}
+
+
+@app.get("/api/lineage/replay/{prompt_id}")
+def lineage_replay(prompt_id: str) -> dict:
+    """Full hop list for a single prompt id, with BAA status per AIVendor."""
+    return phi_lineage.replay_incident(prompt_id)
+
+
+@app.get("/api/lineage/coverage")
+def lineage_coverage() -> dict:
+    """Per-AIVendor PHI-call counts + BAA status + missing terms."""
+    rows = phi_lineage.vendor_coverage_report()
+    return {"count": len(rows), "rows": rows}
+
+
+@app.get("/api/lineage/stats")
+def lineage_stats() -> dict:
+    return phi_lineage.stats()
+
+
+@app.post("/api/lineage/seed-terms")
+def lineage_seed_terms() -> dict:
+    n = phi_lineage.seed_baa_terms()
+    return {"seeded_terms": n}
+
+
+@app.post("/api/lineage/baa")
+def lineage_register_baa(req: _BAARequest) -> dict:
+    phi_lineage.register_baa(**req.model_dump())
+    return {"status": "ok", "baa_id": req.baa_id}
+
+
+@app.post("/api/lineage/vendor")
+def lineage_register_vendor(req: _VendorRequest) -> dict:
+    phi_lineage.register_vendor(**req.model_dump())
+    return {"status": "ok", "vendor_id": req.vendor_id}
+
+
+@app.post("/api/lineage/inspect-mcp")
+def lineage_inspect_mcp(emit_call_events: bool = False) -> dict:
+    """Run the MCP-server PHI inspector against installed servers."""
+    from ingest.lineage.mcp_inspector import inspect
+    return inspect(emit_call_events=emit_call_events)
+
+
+# --------------------------- Vendor Config Auditor -------------------------
+class _VendorAuditRequest(BaseModel):
+    vendor_id: str
+    config: dict[str, Any] = {}
+
+
+@app.post("/api/lineage/audit-vendor")
+def lineage_audit_vendor(req: _VendorAuditRequest) -> dict:
+    """Audit one AI-vendor config dict against the canonical rule catalog."""
+    return _vendor_audit.audit(req.vendor_id, req.config)
+
+
+@app.get("/api/lineage/vendor-rules")
+def lineage_vendor_rules(vendor_id: str | None = None) -> dict:
+    """List the rules in the catalog (filtered by vendor_id if given)."""
+    rules = (_vendor_audit.applicable_rules(vendor_id)
+             if vendor_id else _vendor_audit.VENDOR_RULES)
+    return {
+        "count": len(rules),
+        "known_vendor_ids": sorted(_vendor_audit.all_known_vendor_ids()),
+        "rules": [
+            {"rule_id": r.rule_id,
+             "vendor_ids": sorted(r.vendor_ids),
+             "baa_term": r.baa_term,
+             "title": r.title,
+             "citation": r.citation,
+             "remediation": r.remediation,
+             "severity": r.severity}
+            for r in rules
+        ],
+    }
 
 
 def main() -> None:

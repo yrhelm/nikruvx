@@ -73,17 +73,25 @@ def run_read(cypher: str, **params: Any) -> list[dict]:
 
 
 def apply_schema() -> None:
-    """Apply the graph schema (constraints, indexes, OSI seed).
-    Strips line comments BEFORE splitting on ';' so a comment immediately
-    above a statement doesn't cause the statement to be filtered out."""
+    """Apply the graph schema (constraints, indexes, OSI seed, lineage).
+    Loads every `*.cypher` file in the schema directory in alphabetical
+    order so additions like `phi_lineage.cypher` are picked up
+    automatically. Strips line comments BEFORE splitting on ';' so a
+    comment immediately above a statement doesn't cause the statement to
+    be filtered out."""
+    schema_dir = settings.schema_file.parent
+    files = sorted(schema_dir.glob("*.cypher"))
+    if not files:
+        files = [settings.schema_file]
     with session() as s:
-        text = settings.schema_file.read_text(encoding="utf-8")
-        # 1) Strip line comments line-by-line.
-        no_comments = "\n".join(
-            line for line in text.splitlines() if not line.strip().startswith("//")
-        )
-        # 2) Split on ';' and run each non-empty statement.
-        for stmt in no_comments.split(";"):
-            stmt = stmt.strip()
-            if stmt:
-                s.run(stmt)
+        for f in files:
+            text = f.read_text(encoding="utf-8")
+            # 1) Strip line comments line-by-line.
+            no_comments = "\n".join(
+                line for line in text.splitlines() if not line.strip().startswith("//")
+            )
+            # 2) Split on ';' and run each non-empty statement.
+            for stmt in no_comments.split(";"):
+                stmt = stmt.strip()
+                if stmt:
+                    s.run(stmt)
