@@ -92,6 +92,66 @@ code we can fetch. AI/ML threats from **MITRE ATLAS** and the **OWASP LLM Top
 │                              tool_call_safety,                           │
 │                              sensitive_disclosure                        │
 └──────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│  ZERO-DAY DEFENSE  (TTP-based + AI-anticipated)                          │
+├──────────────────────────────────────────────────────────────────────────┤
+│  ZeroDayPattern ──USES_TECHNIQUE──▶ AttackTechnique ──MANIFESTS_AT──▶ L1-L7│
+│  (42 = 30 historical            (52 ATT&CK + 8 ATLAS)                    │
+│        + 12 AI-anticipated)            │                                 │
+│   │                                    │ COUNTERED_BY                    │
+│   │ OBSERVED_IN                        ▼                                 │
+│   ▼                                  DefenseTechnique                    │
+│  CVE  (bridges back                  (51 D3FEND + 8 LLM-specific:        │
+│        to vuln spine)                 D3-LLM-PIF / D3-LLM-OF /           │
+│                                       D3-LLM-CWB / D3-LLM-PRD / …)       │
+│                                        │                                 │
+│                                        │ IMPLEMENTED_BY                  │
+│                                        ▼                                 │
+│                                  Control  (from Posture / Policy stack)  │
+│                                                                          │
+│  ZeroDayPattern attributes:                                              │
+│    severity, layer, mitigation_window: { immediate | weeks | months },   │
+│    ai_discovered: true|false  ←  Big Sleep, OSS-Fuzz LLM, MCP-poisoning  │
+│    ai_anticipated: true|false ←  forecast wave (12 entries)              │
+│    predicted: true|false      ←  not-yet-disclosed forecast              │
+│                                                                          │
+│  Live data ingestion:                                                    │
+│    ThreatAdvisory (RSS) ──auto-files──▶ ZD-RSS-* patterns                │
+│      Project Zero / MSTIC / CrowdStrike / Unit 42 / Trail of Bits /      │
+│      Schneier / Krebs                                                    │
+│                                                                          │
+│    ModelEval failures ──import_from_model_gate──▶ ZD-MG-* patterns       │
+│                                                                          │
+│  Operational queries:                                                    │
+│    Application ─[EXPOSED_TO]─▶ AttackTechnique  (via capability surface) │
+│         │                                                                │
+│         ▼                                                                │
+│    Personalized Risk = severity × forecast_window × defense_gap          │
+│                       × app_blast_radius                                 │
+│                                                                          │
+│  SIEM Rule Generator: indicator + technique →                            │
+│    Sigma / KQL / Splunk SPL / Elastic DSL / CrowdStrike Falcon FQL       │
+└──────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│  DATA SOURCES  (live ingesters + UI freshness dashboard)                 │
+├──────────────────────────────────────────────────────────────────────────┤
+│  NVD CVE API ─────────▶ :CVE                   (rolling 7-day refresh)   │
+│  MITRE CWE XML ───────▶ :CWE                                             │
+│  OSV.dev API ─────────▶ :Package, :PackageVersion                        │
+│  GHSA GraphQL ────────▶ :CVE / :Package                                  │
+│  CISA KEV JSON ───────▶ :CVE { in_kev: true }                            │
+│  OSSF + GHSA + PyPA ──▶ :Package { malicious: true } (auto / 6h)         │
+│  RSS × 7 feeds ───────▶ :ThreatAdvisory ──▶ :ZeroDayPattern (auto-file)  │
+│  Inventory scanners ──▶ :Application                                     │
+│  Catalog seeds ───────▶ :AttackTechnique / :DefenseTechnique /           │
+│                          :ZeroDayPattern / :BAATerm                      │
+│                                                                          │
+│  Per-source UI panel: last-refresh timestamp + color-coded staleness +   │
+│  one-click refresh (long sweeps run in background daemon thread; UI      │
+│  auto-polls every 4s until completion).                                  │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## What makes this unique
