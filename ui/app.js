@@ -35,7 +35,7 @@ function initModes() {
 }
 function switchMode(mode) {
   document.querySelectorAll(".mode-btn").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
-  ["sbomMode","redteamMode","kevMode","postureMode","hipaaMode","clinicalMode","inventoryMode","supplychainMode","lineageMode","mcpgateMode","modelgateMode"].forEach(id => {
+  ["sbomMode","redteamMode","kevMode","postureMode","hipaaMode","clinicalMode","inventoryMode","supplychainMode","lineageMode","mcpgateMode","modelgateMode","zerodayMode","datasourcesMode"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.hidden = id !== `${mode}Mode`;
   });
@@ -48,6 +48,8 @@ function switchMode(mode) {
   if (mode === "lineage")      initLineage();
   if (mode === "mcpgate")      initMcpGate();
   if (mode === "modelgate")    initModelGate();
+  if (mode === "zeroday")      initZeroDay();
+  if (mode === "datasources")  initDataSources();
 }
 
 /* ---------- bootstrap ---------- */
@@ -1515,6 +1517,667 @@ async function mgLoadHistory() {
     $("#mgHistoryOut").innerHTML = `<table class="matrix-table">${headers}${rows}</table>`;
   } catch (e) {
     $("#mgHistoryOut").innerHTML = `<span class="muted">History load failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+/* ---------- Zero-Day Defense ---------- */
+let _zdInited = false;
+function initZeroDay() {
+  if (_zdInited) { zdLoadStats(); return; }
+  _zdInited = true;
+  document.querySelectorAll("#zerodayMode .sub-btn").forEach(btn => {
+    btn.addEventListener("click", () => switchZdSub(btn.dataset.zdsub));
+  });
+  $("#zdSeedAll").addEventListener("click", zdSeedAll);
+  $("#zdRefreshPatterns").addEventListener("click", zdLoadPatterns);
+  $("#zdRecRun").addEventListener("click", zdRecommend);
+  $("#zdRefreshTech").addEventListener("click", zdLoadTechniques);
+  zdLoadStats();
+  zdLoadAiLandscape();   // headline view first
+  zdPopulateTactics();
+}
+
+function switchZdSub(sub) {
+  document.querySelectorAll("#zerodayMode .sub-btn")
+    .forEach(b => b.classList.toggle("active", b.dataset.zdsub === sub));
+  ["zdsubAilandscape","zdsubMyrisk","zdsubPatterns","zdsubCoverage","zdsubSiem","zdsubRss","zdsubRecommend","zdsubTechniques"].forEach(id => {
+    const want = "zdsub" + sub.charAt(0).toUpperCase() + sub.slice(1);
+    const el = document.getElementById(id);
+    if (el) el.hidden = id !== want;
+  });
+  if (sub === "ailandscape") zdLoadAiLandscape();
+  if (sub === "myrisk")      zdLoadMyRisk();
+  if (sub === "coverage")    zdLoadCoverage();
+  if (sub === "siem")        zdInitSiem();
+  if (sub === "rss")         zdLoadRssRecent();
+  if (sub === "techniques")  zdLoadTechniques();
+}
+
+let _zdMyRiskInited = false;
+async function zdLoadMyRisk() {
+  if (!_zdMyRiskInited) {
+    _zdMyRiskInited = true;
+    $("#myRiskRefresh").addEventListener("click", zdLoadMyRisk);
+  }
+  const topN = parseInt($("#myRiskTopN").value, 10) || 25;
+  $("#myRiskOut").innerHTML = `<span class="muted">Computing exposure across your inventory…</span>`;
+  try {
+    const [s, e] = await Promise.all([
+      fetch(`${API}/zero-day/personalized-risk/summary`).then(r => r.json()),
+      fetch(`${API}/zero-day/personalized-risk?top_n=${topN}`).then(r => r.json()),
+    ]);
+    const summary = `
+      <div class="hero-stats" style="margin-bottom:14px">
+        <div class="stat"><div class="num">${s.techniques_at_risk||0}</div><div class="lbl">Techniques at Risk</div></div>
+        <div class="stat"><div class="num" style="color:#ffb4b4">${s.immediate_action_techniques||0}</div><div class="lbl">Immediate Action</div></div>
+        <div class="stat"><div class="num" style="color:#d4b4ff">${s.ai_anticipated_techniques||0}</div><div class="lbl">AI-Anticipated</div></div>
+        <div class="stat"><div class="num" style="color:#f85149">${s.techniques_with_no_installed_defense||0}</div><div class="lbl">No Installed Defense</div></div>
+      </div>`;
+    const items = (e.items||[]).map(i => {
+      const winChip = i.forecast_window ? zdMitigationChip(i.forecast_window) : '';
+      const aiChip = i.has_ai_anticipated ? '<span class="chip" style="background:#2f1f3a;color:#d4b4ff">AI-anticipated</span>' : '';
+      const apps = (i.affecting_apps||[]).slice(0, 4).map(a =>
+        `<span class="chip">${escapeHtml(a.name||a.key)}</span>`).join(" ");
+      const more = i.affecting_apps && i.affecting_apps.length > 4 ?
+        `<span class="muted">+${i.affecting_apps.length - 4} more</span>` : '';
+      const installed = (i.installed_defenses||[]).map(d =>
+        `<span class="chip" style="background:#0f2a16;color:#3fb950">${escapeHtml(d.id)}</span>`).join(" ");
+      const missing = (i.missing_defenses||[]).slice(0, 6).map(d =>
+        `<span class="chip" style="background:#3a1212;color:#ffb4b4">${escapeHtml(d.id)}</span>`).join(" ");
+      return `<div class="gap-card">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <span class="chip" style="font-weight:600">score ${i.severity_score}</span>
+          ${winChip} ${aiChip}
+          <span class="chip">L${i.layer}</span>
+          <span class="chip">${escapeHtml(i.tactic)}</span>
+          <b>${escapeHtml(i.technique_name)}</b>
+          <span class="muted"><code>${escapeHtml(i.technique_id)}</code></span>
+        </div>
+        <div class="muted" style="margin-top:6px">Apps exposed (${(i.affecting_apps||[]).length}): ${apps} ${more}</div>
+        <div style="margin-top:6px"><b>Have:</b> ${installed || '<span class="muted">— none —</span>'}</div>
+        <div style="margin-top:6px"><b>Missing:</b> ${missing || '<span class="muted">— covered —</span>'}</div>
+      </div>`;
+    }).join("");
+    $("#myRiskOut").innerHTML = summary + (items || `<div class="muted">No exposure detected — either inventory is empty or you're fully covered.</div>`);
+  } catch (err) {
+    $("#myRiskOut").innerHTML = `<span class="muted">Failed: ${escapeHtml(err.message)}</span>`;
+  }
+}
+
+let _zdSiemInited = false;
+function zdInitSiem() {
+  if (_zdSiemInited) return;
+  _zdSiemInited = true;
+  $("#siemFromIndicator").addEventListener("click", zdSiemFromIndicator);
+  $("#siemFromPattern").addEventListener("click", zdSiemFromPattern);
+}
+
+function zdRenderSiemRule(d) {
+  return `
+    <div class="gap-card">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        ${zdSeverityChip(d.severity)}
+        <span class="chip">${escapeHtml(d.log_source)}</span>
+        <span class="chip"><code>${escapeHtml(d.technique_id)}</code></span>
+        <b>${escapeHtml(d.title)}</b>
+      </div>
+      <div class="muted" style="margin-top:6px">Indicator: ${escapeHtml(d.indicator)}</div>
+      <details style="margin-top:8px"><summary>Sigma</summary><pre style="white-space:pre-wrap;word-break:break-word">${escapeHtml(d.sigma)}</pre></details>
+      <details style="margin-top:6px"><summary>KQL (Sentinel / Defender)</summary><pre style="white-space:pre-wrap;word-break:break-word">${escapeHtml(d.kql)}</pre></details>
+      <details style="margin-top:6px"><summary>Splunk SPL</summary><pre style="white-space:pre-wrap;word-break:break-word">${escapeHtml(d.splunk)}</pre></details>
+      <details style="margin-top:6px"><summary>Elastic DSL</summary><pre style="white-space:pre-wrap;word-break:break-word">${escapeHtml(d.elastic)}</pre></details>
+      <details style="margin-top:6px"><summary>CrowdStrike Falcon FQL</summary><pre style="white-space:pre-wrap;word-break:break-word">${escapeHtml(d.falcon_fql)}</pre></details>
+      ${(d.notes||[]).length ? `<div class="muted" style="margin-top:6px">Notes: ${(d.notes||[]).join("; ")}</div>` : ''}
+    </div>`;
+}
+
+async function zdSiemFromIndicator() {
+  zdInitSiem();
+  const indicator = $("#siemIndicator").value.trim();
+  const tid = $("#siemTechnique").value.trim();
+  if (!indicator || !tid) { alert("Indicator + technique id are both required"); return; }
+  $("#siemOut").style.display = "block";
+  $("#siemOut").innerHTML = `<span class="muted">Generating…</span>`;
+  try {
+    const r = await fetch(`${API}/zero-day/siem/from-indicator`, {
+      method: "POST", headers: {"content-type":"application/json"},
+      body: JSON.stringify({indicator, technique_id: tid}),
+    }).then(r => r.json());
+    $("#siemOut").innerHTML = zdRenderSiemRule(r);
+  } catch (e) {
+    $("#siemOut").innerHTML = `<span class="muted">Generate failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function zdSiemFromPattern() {
+  zdInitSiem();
+  const pid = $("#siemPatternId").value.trim();
+  if (!pid) { alert("Pattern id required, e.g. ZD-2024-XZ-UTILS"); return; }
+  $("#siemOut").style.display = "block";
+  $("#siemOut").innerHTML = `<span class="muted">Generating rules for ${escapeHtml(pid)}…</span>`;
+  try {
+    const r = await fetch(`${API}/zero-day/siem/from-pattern/${encodeURIComponent(pid)}`).then(r => r.json());
+    if (!r.rules || !r.rules.length) {
+      $("#siemOut").innerHTML = `<span class="muted">No rules — pattern has no behavioral indicators.</span>`;
+      return;
+    }
+    $("#siemOut").innerHTML = `<div class="muted" style="margin-bottom:8px">${r.count} rule(s) across ${(r.formats||[]).length} formats.</div>${r.rules.map(zdRenderSiemRule).join('')}`;
+  } catch (e) {
+    $("#siemOut").innerHTML = `<span class="muted">Generate failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+let _zdRssInited = false;
+function zdInitRss() {
+  if (_zdRssInited) return;
+  _zdRssInited = true;
+  $("#rssSweepAll").addEventListener("click", () => zdRssSweep(false));
+  $("#rssSweepAllLlm").addEventListener("click", () => zdRssSweep(true));
+  $("#rssRefreshList").addEventListener("click", zdLoadRssRecent);
+  $("#rssImportFromModel").addEventListener("click", zdImportFromModel);
+}
+
+async function zdRssSweep(useLlm = false) {
+  zdInitRss();
+  const note = useLlm
+    ? "Sweeping with LLM extraction (slower; needs Ollama up; per-entry 15s timeout)…"
+    : "Sweeping all feeds with fast regex extraction (5-30s typical)…";
+  $("#rssOut").innerHTML = `<span class="muted">${note}</span>`;
+  try {
+    const r = await fetch(`${API}/zero-day/rss/sweep?auto_file=true&use_llm=${useLlm}`, {method:"POST"}).then(r => r.json());
+    const lines = (r.feeds||[]).map(f =>
+      `<div class="muted">[${escapeHtml(f.feed)}] fetched=${f.fetched} new=${f.new} filed-as-zero-day=${f.filed}</div>`).join('');
+    alert(`Sweep complete: ${r.new_total} new advisories, ${r.filed_total} auto-filed as zero-day patterns.`);
+    $("#rssOut").innerHTML = lines;
+    setTimeout(zdLoadRssRecent, 200);
+  } catch (e) {
+    $("#rssOut").innerHTML = `<span class="muted">Sweep failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function zdLoadRssRecent() {
+  zdInitRss();
+  $("#rssOut").innerHTML = `<span class="muted">Loading recent advisories…</span>`;
+  try {
+    const r = await fetch(`${API}/zero-day/rss/recent?limit=50`).then(r => r.json());
+    if (!r.rows || !r.rows.length) {
+      $("#rssOut").innerHTML = `<span class="muted">No advisories yet — click "Sweep all feeds" first.</span>`;
+      return;
+    }
+    const cards = r.rows.map(a => `
+      <div class="gap-card">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          ${zdSeverityChip(a.severity||'medium')}
+          <span class="chip">L${a.layer||7}</span>
+          <span class="chip">${escapeHtml(a.feed_name||'?')}</span>
+          ${a.ai_discovered ? '<span class="chip" style="background:#2f1f3a;color:#d4b4ff">AI-discovered</span>' : ''}
+          <span class="chip">${escapeHtml(a.extraction_method||'?')}</span>
+          <a href="${escapeHtml(a.url||'#')}" target="_blank">${escapeHtml(a.title||'?')}</a>
+        </div>
+        <div class="muted" style="margin-top:4px">Published: ${escapeHtml(a.published||'?')}</div>
+        <div style="margin-top:4px">${(a.techniques||[]).map(t => `<span class="chip">${escapeHtml(t)}</span>`).join(" ") || '<span class="muted">no techniques extracted</span>'}</div>
+        ${(a.indicators||[]).length ? `<details style="margin-top:6px"><summary class="muted">Indicators (${a.indicators.length})</summary><ul>${a.indicators.map(s => `<li>${escapeHtml(s)}</li>`).join('')}</ul></details>` : ''}
+      </div>`).join('');
+    $("#rssOut").innerHTML = `<div class="muted" style="margin:6px 0">${r.count} advisory entries.</div>${cards}`;
+  } catch (e) {
+    $("#rssOut").innerHTML = `<span class="muted">Load failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function zdImportFromModel() {
+  zdInitRss();
+  if (!confirm("Cross-reference recent Model Gate failures and file them as zero-day patterns?")) return;
+  $("#rssOut").innerHTML = `<span class="muted">Importing from Model Gate evals…</span>`;
+  try {
+    const r = await fetch(`${API}/zero-day/import-from-model-gate?min_severity=high&max_age_days=30`,
+                          {method:"POST"}).then(r => r.json());
+    $("#rssOut").innerHTML = `<div class="muted">Scanned ${r.scanned} probe results · filed ${r.filed_new} new pattern(s).</div>`;
+    setTimeout(zdLoadStats, 100);
+  } catch (e) {
+    $("#rssOut").innerHTML = `<span class="muted">Import failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+function zdMitigationChip(w) {
+  const palette = {
+    immediate: ["#3a1212","#ffb4b4"],
+    weeks:     ["#3a3012","#ffd479"],
+    months:    ["#1f3a2a","#a4e2b8"],
+  }[w] || ["#1c2128","#d6e1f5"];
+  return `<span class="chip" style="background:${palette[0]};color:${palette[1]};font-weight:600">${w||'unspecified'}</span>`;
+}
+
+function zdRenderPatternCard(p, options = {}) {
+  const tags = [];
+  if (p.predicted) tags.push('<span class="chip" style="background:#2f1f3a;color:#d4b4ff">FORECAST</span>');
+  if (p.ai_discovered) tags.push('<span class="chip" style="background:#2f1f3a;color:#d4b4ff">AI-discovered</span>');
+  if (p.ai_anticipated && !p.ai_discovered) tags.push('<span class="chip" style="background:#2f1f3a;color:#d4b4ff">AI-anticipated</span>');
+  return `
+    <div class="gap-card" style="cursor:pointer" onclick="zdShowPattern('${escapeHtml(p.id)}')">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        ${zdSeverityChip(p.severity)}
+        ${p.mitigation_window ? zdMitigationChip(p.mitigation_window) : ''}
+        <span class="chip">L${p.layer}</span>
+        ${tags.join(' ')}
+        <b>${escapeHtml(p.name)}</b>
+        <span class="muted"><code>${escapeHtml(p.id)}</code></span>
+      </div>
+      <div class="muted" style="margin-top:6px">${escapeHtml(p.description)}</div>
+      <div style="margin-top:6px">
+        ${(p.techniques||[]).map(t => `<span class="chip">${escapeHtml(t)}</span>`).join(" ")}
+      </div>
+      <div class="muted" style="margin-top:6px">First seen: ${escapeHtml(p.first_seen||'?')} · Source: ${escapeHtml(p.source||'?')}</div>
+    </div>`;
+}
+
+async function zdLoadAiLandscape() {
+  $("#zdLandscapeOut").innerHTML = `<span class="muted">Loading AI threat landscape…</span>`;
+  try {
+    const r = await fetch(`${API}/zero-day/ai-landscape`).then(r => r.json());
+    const t = r.totals || {};
+    const immediate = (r.by_mitigation_window?.immediate || []);
+    const weeks = (r.by_mitigation_window?.weeks || []);
+    const months = (r.by_mitigation_window?.months || []);
+    const discovered = (r.discovered || []);
+    const anticipated = (r.anticipated_wave || []);
+
+    const heroStats = `
+      <div class="hero-stats" style="margin-bottom:14px">
+        <div class="stat"><div class="num" style="color:#d4b4ff">${t.ai_discovered||0}</div><div class="lbl">AI-Discovered (real)</div></div>
+        <div class="stat"><div class="num" style="color:#d4b4ff">${t.predicted_forecast||0}</div><div class="lbl">Forecast Wave</div></div>
+        <div class="stat"><div class="num" style="color:#ffb4b4">${immediate.length}</div><div class="lbl">Immediate Action</div></div>
+        <div class="stat"><div class="num" style="color:#ffd479">${weeks.length}</div><div class="lbl">Weeks Window</div></div>
+        <div class="stat"><div class="num" style="color:#a4e2b8">${months.length}</div><div class="lbl">Months Window</div></div>
+      </div>`;
+
+    const immediateSection = immediate.length ? `
+      <h3 style="color:#ffb4b4;margin-top:18px">Immediate action — pre-mitigate now</h3>
+      <div class="muted" style="margin-bottom:8px">These attack classes have either started landing in the wild or are about to. Deploy the listed defenses before the wave arrives.</div>
+      ${immediate.map(p => zdRenderPatternCard(p)).join('')}
+    ` : '';
+
+    const weeksSection = weeks.length ? `
+      <h3 style="color:#ffd479;margin-top:18px">Weeks-window — prepare next sprint</h3>
+      ${weeks.map(p => zdRenderPatternCard(p)).join('')}
+    ` : '';
+
+    const monthsSection = months.length ? `
+      <h3 style="color:#a4e2b8;margin-top:18px">Months-window — roadmap items</h3>
+      ${months.map(p => zdRenderPatternCard(p)).join('')}
+    ` : '';
+
+    const discoveredSection = discovered.length ? `
+      <h3 style="margin-top:18px">Already-disclosed AI-discovered bugs</h3>
+      <div class="muted" style="margin-bottom:8px">Real findings from AI offensive systems already in the public record.</div>
+      ${discovered.map(p => zdRenderPatternCard(p)).join('')}
+    ` : '';
+
+    const anticipatedSection = anticipated.length ? `
+      <h3 style="margin-top:18px">Anticipated forecast wave (full list)</h3>
+      <div class="muted" style="margin-bottom:8px">Classes of attacks AI offensive automation is making cheap to industrialize. Treat as inbound.</div>
+      ${anticipated.map(p => zdRenderPatternCard(p)).join('')}
+    ` : '';
+
+    $("#zdLandscapeOut").innerHTML =
+      heroStats + immediateSection + weeksSection + monthsSection +
+      discoveredSection + anticipatedSection;
+  } catch (e) {
+    $("#zdLandscapeOut").innerHTML = `<span class="muted">Landscape load failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function zdLoadStats() {
+  try {
+    const s = await fetch(`${API}/zero-day/stats`).then(r => r.json());
+    $("#zdTechCount").textContent     = s.techniques ?? 0;
+    $("#zdDefCount").textContent      = s.defenses ?? 0;
+    $("#zdPatternCount").textContent  = s.patterns ?? 0;
+    $("#zdAiCount").textContent       = s.ai_discovered_patterns ?? 0;
+    $("#zdGapCount").textContent      = s.techniques_uncovered_in_catalog ?? 0;
+  } catch (e) { console.error("zd stats", e); }
+}
+
+async function zdSeedAll() {
+  $("#zdPatternsOut").innerHTML = `<span class="muted">Seeding catalogs into the graph…</span>`;
+  try {
+    const r = await fetch(`${API}/zero-day/seed`, {method:"POST"}).then(r => r.json());
+    alert(`Seeded ${r.attack_techniques} techniques, ${r.defense_techniques} defenses, ${r.zero_day_patterns} patterns.`);
+    zdLoadStats();
+    zdLoadPatterns();
+  } catch (e) {
+    alert(`Seed failed: ${e.message}`);
+  }
+}
+
+function zdSeverityChip(s) {
+  const palette = {
+    critical: ["#3a1212","#ffb4b4"],
+    high:     ["#3a1f12","#ffb480"],
+    medium:   ["#3a3012","#ffd479"],
+    low:      ["#1f3a2a","#a4e2b8"],
+  }[s] || ["#1c2128","#d6e1f5"];
+  return `<span class="chip" style="background:${palette[0]};color:${palette[1]}">${s}</span>`;
+}
+
+function zdTacticChip(t) {
+  const palette = {
+    "Harden":   ["#0f1f3a","#7fb4ff"],
+    "Detect":   ["#3a3012","#ffd479"],
+    "Isolate":  ["#1f3a2a","#a4e2b8"],
+    "Deceive":  ["#2f1f3a","#d4b4ff"],
+    "Evict":    ["#3a1212","#ffb4b4"],
+    "Restore":  ["#1c2128","#d6e1f5"],
+  }[t] || ["#1c2128","#d6e1f5"];
+  return `<span class="chip" style="background:${palette[0]};color:${palette[1]}">${t}</span>`;
+}
+
+async function zdLoadPatterns() {
+  const params = new URLSearchParams();
+  const layer = $("#zdPatternLayer").value;
+  const sev = $("#zdPatternSev").value;
+  const ai = $("#zdPatternAi").checked;
+  if (layer) params.set("layer", layer);
+  if (sev) params.set("severity", sev);
+  if (ai) params.set("ai_only", "true");
+  $("#zdPatternsOut").innerHTML = `<span class="muted">Loading patterns…</span>`;
+  try {
+    const r = await fetch(`${API}/zero-day/patterns?${params.toString()}`).then(r => r.json());
+    if (!r.rows || !r.rows.length) {
+      $("#zdPatternsOut").innerHTML = `<span class="muted">No patterns match these filters.</span>`;
+      return;
+    }
+    const cards = r.rows.map(p => `
+      <div class="gap-card" style="cursor:pointer" onclick="zdShowPattern('${escapeHtml(p.id)}')">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          ${zdSeverityChip(p.severity)}
+          <span class="chip">L${p.layer}</span>
+          ${p.ai_discovered ? '<span class="chip" style="background:#2f1f3a;color:#d4b4ff">AI-discovered</span>' : ''}
+          <b>${escapeHtml(p.name)}</b>
+          <span class="muted"><code>${escapeHtml(p.id)}</code></span>
+        </div>
+        <div class="muted" style="margin-top:6px">${escapeHtml(p.description)}</div>
+        <div style="margin-top:6px">
+          ${(p.techniques||[]).map(t => `<span class="chip">${escapeHtml(t)}</span>`).join(" ")}
+        </div>
+        <div class="muted" style="margin-top:6px">First seen: ${escapeHtml(p.first_seen||'?')} · Source: ${escapeHtml(p.source||'?')}</div>
+      </div>
+    `).join("");
+    $("#zdPatternsOut").innerHTML = `<div class="muted" style="margin:6px 0">${r.count} pattern(s). Click any card for full defenses.</div>${cards}`;
+  } catch (e) {
+    $("#zdPatternsOut").innerHTML = `<span class="muted">Patterns load failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function zdShowPattern(pid) {
+  switchZdSub("recommend");
+  $("#zdRecTechnique").value = "";
+  $("#zdRecOut").style.display = "block";
+  $("#zdRecOut").innerHTML = `<span class="muted">Loading pattern ${escapeHtml(pid)}…</span>`;
+  try {
+    const r = await fetch(`${API}/zero-day/pattern/${encodeURIComponent(pid)}`).then(r => r.json());
+    zdRenderRecommendation(r, /*isPattern*/ true);
+  } catch (e) {
+    $("#zdRecOut").innerHTML = `<span class="muted">Failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function zdRecommend() {
+  const tid = $("#zdRecTechnique").value.trim();
+  if (!tid) { alert("Enter an ATT&CK technique id (e.g. T1190 or AML.T0051)"); return; }
+  $("#zdRecOut").style.display = "block";
+  $("#zdRecOut").innerHTML = `<span class="muted">Loading recommendations…</span>`;
+  try {
+    const r = await fetch(`${API}/zero-day/recommend?technique=${encodeURIComponent(tid)}`).then(r => r.json());
+    zdRenderRecommendation(r, /*isPattern*/ false);
+  } catch (e) {
+    $("#zdRecOut").innerHTML = `<span class="muted">Failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+function zdRenderRecommendation(r, isPattern) {
+  const techs = isPattern ? (r.techniques||[]) : [r.technique];
+  const techCards = techs.filter(Boolean).map(t => `
+    <div class="gap-card">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <span class="chip">L${t.layer}</span>
+        <span class="chip">${escapeHtml(t.tactic||'')}</span>
+        <b>${escapeHtml(t.name)}</b>
+        <span class="muted"><code>${escapeHtml(t.id)}</code></span>
+      </div>
+      <div class="muted" style="margin-top:4px">${escapeHtml(t.description||'')}</div>
+      <div class="muted" style="margin-top:4px">Capabilities: ${(t.capabilities||[]).map(c => `<span class="chip">${escapeHtml(c)}</span>`).join(" ")}</div>
+    </div>
+  `).join("");
+  const defCards = (r.defenses||[]).map(d => `
+    <div class="gap-card">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        ${zdTacticChip(d.tactic)}
+        <b>${escapeHtml(d.name)}</b>
+        <span class="muted"><code>${escapeHtml(d.id)}</code></span>
+      </div>
+      <div class="muted" style="margin-top:4px">${escapeHtml(d.description||'')}</div>
+      ${d.nikruvx_module ? `<div style="margin-top:4px"><b>NikruvX module:</b> <code>${escapeHtml(d.nikruvx_module)}</code></div>` : ""}
+      <div class="muted" style="margin-top:4px">Counters: ${(d.counters||[]).map(c => `<span class="chip">${escapeHtml(c)}</span>`).join(" ")}</div>
+    </div>
+  `).join("");
+  let header = "";
+  if (isPattern) {
+    const p = r.pattern;
+    header = `<h4 style="margin-top:0">${escapeHtml(p.name)}</h4>
+      <div style="margin-bottom:8px">
+        ${zdSeverityChip(p.severity)} <span class="chip">L${p.layer}</span>
+        ${p.ai_discovered ? '<span class="chip" style="background:#2f1f3a;color:#d4b4ff">AI-discovered</span>' : ''}
+      </div>
+      <div class="muted" style="margin-bottom:8px">${escapeHtml(p.description)}</div>
+      ${(p.behavioral_indicators||[]).length ? `<details><summary>Behavioral indicators (${p.behavioral_indicators.length})</summary><ul>${p.behavioral_indicators.map(b => `<li>${escapeHtml(b)}</li>`).join("")}</ul></details>` : ""}`;
+  }
+  $("#zdRecOut").innerHTML = `
+    ${header}
+    <h4>${isPattern ? 'Techniques used' : 'Technique'}</h4>
+    ${techCards || '<div class="muted">No technique data.</div>'}
+    <h4>Recommended defenses (${r.defense_count||0})</h4>
+    ${defCards || '<div class="muted">No defenses mapped — this is a catalog gap.</div>'}`;
+}
+
+async function zdLoadCoverage() {
+  $("#zdCoverageOut").innerHTML = `<span class="muted">Loading coverage…</span>`;
+  $("#zdGapsOut").innerHTML = `<span class="muted">Loading gaps…</span>`;
+  try {
+    const c = await fetch(`${API}/zero-day/coverage`).then(r => r.json());
+    const headers = `<tr><th>Layer</th><th>Techniques</th><th>With Defense</th><th>Uncovered</th><th>Zero-Day Patterns</th><th>AI-Discovered</th></tr>`;
+    const rows = c.by_layer.map(e => {
+      const cov = e.technique_count > 0
+        ? Math.round(100 * e.techniques_with_defense / e.technique_count) : 100;
+      const color = cov >= 90 ? "#3fb950" : cov >= 60 ? "#d29922" : "#f85149";
+      return `<tr>
+        <td><b>L${e.layer}</b></td>
+        <td>${e.technique_count}</td>
+        <td><span style="color:${color};font-weight:600">${e.techniques_with_defense}</span> (${cov}%)</td>
+        <td>${e.techniques_uncovered}</td>
+        <td>${e.zero_day_pattern_count}</td>
+        <td>${e.ai_discovered_count}</td>
+      </tr>`;
+    }).join("");
+    $("#zdCoverageOut").innerHTML = `<table class="matrix-table">${headers}${rows}</table>`;
+  } catch (e) {
+    $("#zdCoverageOut").innerHTML = `<span class="muted">Coverage load failed: ${escapeHtml(e.message)}</span>`;
+  }
+  try {
+    const g = await fetch(`${API}/zero-day/coverage/gaps`).then(r => r.json());
+    if (!g.rows || !g.rows.length) {
+      $("#zdGapsOut").innerHTML = `<div class="muted">No gaps — every catalog technique has at least one defense mapped.</div>`;
+      return;
+    }
+    const cards = g.rows.map(gap => `
+      <div class="gap-card">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <span class="chip">L${gap.layer}</span>
+          <span class="chip">${escapeHtml(gap.tactic)}</span>
+          <b>${escapeHtml(gap.name)}</b>
+          <span class="muted"><code>${escapeHtml(gap.technique_id)}</code></span>
+        </div>
+        <div class="muted" style="margin-top:4px">Capabilities: ${(gap.capabilities||[]).map(c => `<span class="chip">${escapeHtml(c)}</span>`).join(" ")}</div>
+        <div class="muted" style="margin-top:4px">${escapeHtml(gap.reason)}</div>
+      </div>
+    `).join("");
+    $("#zdGapsOut").innerHTML = `<div class="muted" style="margin:6px 0">${g.count} technique(s) with no defense mapped — these are good targets for catalog growth.</div>${cards}`;
+  } catch (e) {
+    $("#zdGapsOut").innerHTML = `<span class="muted">Gaps load failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function zdPopulateTactics() {
+  try {
+    const r = await fetch(`${API}/zero-day/techniques`).then(r => r.json());
+    const tactics = [...new Set((r.rows||[]).map(t => t.tactic))].sort();
+    const sel = $("#zdTechTactic");
+    tactics.forEach(t => {
+      const o = document.createElement("option");
+      o.value = t; o.textContent = t;
+      sel.appendChild(o);
+    });
+  } catch { /* silent */ }
+}
+
+async function zdLoadTechniques() {
+  const params = new URLSearchParams();
+  const layer = $("#zdTechLayer").value;
+  const tactic = $("#zdTechTactic").value;
+  if (layer) params.set("layer", layer);
+  if (tactic) params.set("tactic", tactic);
+  $("#zdTechOut").innerHTML = `<span class="muted">Loading techniques…</span>`;
+  try {
+    const r = await fetch(`${API}/zero-day/techniques?${params.toString()}`).then(r => r.json());
+    const headers = `<tr><th>ID</th><th>Layer</th><th>Tactic</th><th>Name</th><th>Capabilities</th></tr>`;
+    const rows = r.rows.map(t => `
+      <tr style="cursor:pointer" onclick="$('#zdRecTechnique').value='${escapeHtml(t.id)}';switchZdSub('recommend');zdRecommend()">
+        <td><code>${escapeHtml(t.id)}</code></td>
+        <td>L${t.layer}</td>
+        <td>${escapeHtml(t.tactic)}</td>
+        <td>${escapeHtml(t.name)}</td>
+        <td>${(t.capabilities||[]).map(c => `<span class="chip">${escapeHtml(c)}</span>`).join(" ")}</td>
+      </tr>`).join("");
+    $("#zdTechOut").innerHTML = `<div class="muted" style="margin:6px 0">${r.count} technique(s). Click any row to see recommended defenses.</div><table class="matrix-table">${headers}${rows}</table>`;
+  } catch (e) {
+    $("#zdTechOut").innerHTML = `<span class="muted">Techniques load failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+/* ---------- Data Sources ---------- */
+let _dsInited = false;
+let _dsPollTimer = null;
+function initDataSources() {
+  if (!_dsInited) {
+    _dsInited = true;
+    $("#dsRefreshAll").addEventListener("click", dsRefreshAll);
+    $("#dsRefreshList").addEventListener("click", dsLoadStatus);
+  }
+  dsLoadStatus();
+}
+
+function _dsAge(ts) {
+  if (!ts) return "never";
+  try {
+    const t = new Date(ts).getTime();
+    const ms = Date.now() - t;
+    if (isNaN(ms) || ms < 0) return ts;
+    const min = Math.floor(ms / 60000);
+    if (min < 1) return "just now";
+    if (min < 60) return `${min}m ago`;
+    const h = Math.floor(min / 60);
+    if (h < 24) return `${h}h ago`;
+    const d = Math.floor(h / 24);
+    return `${d}d ago`;
+  } catch { return ts; }
+}
+
+function _dsAgeColor(ts) {
+  if (!ts) return "#f85149";
+  try {
+    const t = new Date(ts).getTime();
+    const days = (Date.now() - t) / 86400000;
+    if (isNaN(days)) return "#d29922";
+    if (days < 1) return "#3fb950";
+    if (days < 7) return "#d29922";
+    return "#f85149";
+  } catch { return "#d29922"; }
+}
+
+function _dsJobBadge(job) {
+  if (!job) return '';
+  if (job.status === "running") {
+    const since = job.started_at ? _dsAge(job.started_at) : "";
+    return `<span class="chip" style="background:#2f1f3a;color:#d4b4ff">RUNNING ${since ? '· started ' + since : ''}</span>`;
+  }
+  if (job.status === "completed") {
+    return `<span class="chip" style="background:#0f2a16;color:#3fb950">DONE ${_dsAge(job.finished_at||job.updated_at)}</span>`;
+  }
+  if (job.status === "failed") {
+    return `<span class="chip" style="background:#3a1212;color:#ffb4b4" title="${escapeHtml(job.error||'')}">FAILED</span>`;
+  }
+  return `<span class="chip">${escapeHtml(job.status||'')}</span>`;
+}
+
+async function dsLoadStatus() {
+  $("#dsOut").innerHTML = `<span class="muted">Loading source status…</span>`;
+  try {
+    const r = await fetch(`${API}/data-sources`).then(r => r.json());
+    const headers = `<tr>
+        <th>Source</th><th>Count</th><th>Last refresh</th>
+        <th>Job</th><th>Action</th></tr>`;
+    const rows = (r.rows||[]).map(s => {
+      const ageColor = _dsAgeColor(s.last_refresh);
+      const ageText = _dsAge(s.last_refresh);
+      const tokenWarn = s.requires_token ?
+        `<div class="muted" style="font-size:11px">requires: ${escapeHtml(s.requires_token)}</div>` : '';
+      const jobIs = s.job?.status === "running";
+      const refreshBtn = s.supports_refresh
+        ? `<button onclick="dsRefreshOne('${escapeHtml(s.id)}')"${jobIs ? ' disabled' : ''}>${jobIs ? 'Running…' : 'Refresh'}</button>`
+        : `<span class="muted">read-only</span>`;
+      return `<tr>
+        <td><b>${escapeHtml(s.name)}</b><div class="muted">${escapeHtml(s.description||'')}</div>${tokenWarn}</td>
+        <td>${(s.count||0).toLocaleString()}</td>
+        <td><span style="color:${ageColor}">${escapeHtml(ageText)}</span><div class="muted" style="font-size:11px">${escapeHtml(s.last_refresh||'')}</div></td>
+        <td>${_dsJobBadge(s.job)}</td>
+        <td>${refreshBtn}</td>
+      </tr>`;
+    }).join("");
+    $("#dsOut").innerHTML = `<table class="matrix-table">${headers}${rows}</table>`;
+    // If any job is running, poll again in 4s
+    if (_dsPollTimer) { clearTimeout(_dsPollTimer); _dsPollTimer = null; }
+    if ((r.rows||[]).some(s => s.job?.status === "running")) {
+      _dsPollTimer = setTimeout(dsLoadStatus, 4000);
+    }
+  } catch (e) {
+    $("#dsOut").innerHTML = `<span class="muted">Status load failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function dsRefreshOne(id) {
+  try {
+    const r = await fetch(`${API}/data-sources/${encodeURIComponent(id)}/refresh`,
+                          {method:"POST"}).then(r => r.json());
+    if (r.status === "started") {
+      // The polling loop will pick it up
+      dsLoadStatus();
+    } else if (r.status === "already_running") {
+      alert("Refresh already in progress for this source.");
+    } else {
+      alert(`Refresh failed: ${r.error || JSON.stringify(r)}`);
+    }
+  } catch (e) {
+    alert(`Refresh failed: ${e.message}`);
+  }
+}
+
+async function dsRefreshAll() {
+  if (!confirm("Kick off refresh on every source that supports it? Long-running ones (NVD, OSV) run in background.")) return;
+  try {
+    const r = await fetch(`${API}/data-sources/refresh-all`, {method:"POST"}).then(r => r.json());
+    alert(`Started: ${(r.started||[]).length}, Skipped: ${(r.skipped||[]).length}`);
+    dsLoadStatus();
+  } catch (e) {
+    alert(`Refresh failed: ${e.message}`);
   }
 }
 

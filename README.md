@@ -127,6 +127,24 @@ code we can fetch. AI/ML threats from **MITRE ATLAS** and the **OWASP LLM Top
    safety, and sensitive disclosure. Diff mode surfaces only the probes
    that newly fail when a vendor ships a new model version — exactly what
    security teams need to approve a Copilot dropdown change.
+10. **Zero-Day Defense (TTP-based + anticipatory)** — 52 ATT&CK techniques
+    across all 7 OSI layers + 8 ATLAS LLM techniques, 51 D3FEND defenses
+    including 8 LLM-specific extensions, 42 zero-day patterns mixing
+    historical (xz-utils, Log4Shell, GoFetch, LeftoverLocals, Big Sleep's
+    SQLite find) with a 12-entry **AI-anticipated forecast wave** tagged
+    by mitigation window (immediate / weeks / months) so defenders can
+    pre-mitigate the bug classes AI offensive automation is industrializing
+    *before* the first CVE drops. Live RSS ingestion of Project Zero / MSTIC /
+    CrowdStrike / Unit 42 / Trail of Bits / Schneier / Krebs (auto-files
+    high-severity advisories as `:ZeroDayPattern`), Model Gate failures
+    cross-reference into the catalog as AI-discovered patterns, SIEM rule
+    generator (Sigma / KQL / Splunk / Elastic / CrowdStrike FQL), and a
+    **Personalized Risk** view scoring exposure across your live Asset
+    Inventory + Policy stack.
+11. **Data Sources dashboard** — every ingester surfaced as a per-source
+    freshness panel with last-refresh timestamps, color-coded staleness,
+    and one-click refresh (long-running sweeps run in a background thread
+    and the UI auto-polls until they complete).
 
 ## Prerequisites
 
@@ -1109,6 +1127,130 @@ GET  /api/model-gate/corpus
 `:ModelProbeResult { id, probe_id, category, severity, title, passed, reason, response_excerpt, response_chars }`
 `:ModelEval -[:HAS_RESULT]-> :ModelProbeResult`
 
+---
+
+## Zero-Day Defense (TTP-based defense)
+
+The premise: AI agents (Big Sleep, OSS-Fuzz with LLM-driven mutators) are
+finding zero-days faster than the patch cycle can absorb, so signature-
+based defense is permanently behind. Defense has to shift to *behavioral
+and TTP-based* — what the attack does matters more than which CVE it
+exploits.
+
+This module gives security teams a way to answer **"what zero-days would
+land on my stack?"** without waiting for the patch cycle. Three curated
+catalogs feed into a recommender + coverage analyzer:
+
+### Three catalogs
+
+| Catalog | Size | Source | Module |
+|---|---|---|---|
+| **ATT&CK Techniques** | 60+ across all 7 OSI layers + 8 MITRE ATLAS LLM techniques | MITRE ATT&CK + ATLAS | `engine.attack_catalog` |
+| **D3FEND Defenses** | 45+ including 8 custom AI/LLM extensions (`D3-LLM-*`) | MITRE D3FEND + NikruvX | `engine.defense_catalog` |
+| **Zero-Day Patterns** | ~30 real-world patterns from 2017-2025 | curated public disclosures | `engine.zero_day_catalog` |
+
+The pattern catalog mixes human-discovered (Log4Shell, xz-utils, MOVEit,
+Operation Triangulation, EternalBlue, BlueKeep, PrintNightmare, PwnKit,
+Spectre/Meltdown family, GoFetch, LeftoverLocals, etc.) and AI-discovered
+(Big Sleep's SQLite stack underflow, OSS-Fuzz LLM-assisted CVEs, MCP
+tool-poisoning, indirect prompt injection in RAG). Each entry tags the
+ATT&CK techniques used, the OSI layer, severity, behavioral indicators,
+and CVE id (when one was assigned later — zero-days get CVEs eventually).
+
+### Recommender
+
+Given an ATT&CK technique id, return the defenses that counter it,
+ranked by tactic priority (Harden first, then Isolate, Detect, Deceive,
+Evict, Restore — preventive before reactive):
+
+```powershell
+python -m engine.zero_day_defense recommend T1190
+python -m engine.zero_day_defense recommend AML.T0051
+python -m engine.zero_day_defense pattern ZD-2024-XZ-UTILS
+python -m engine.zero_day_defense pattern ZD-2024-BIG-SLEEP-SQLITE
+```
+
+### Coverage analysis
+
+```powershell
+python -m engine.zero_day_defense coverage    # per-OSI-layer matrix
+python -m engine.zero_day_defense gaps        # techniques w/ no defense
+python -m engine.zero_day_defense ai-only     # AI-discovered patterns
+python -m engine.zero_day_defense seed        # load all into the graph
+```
+
+### UI
+
+The **Zero-Day Defense** tab has four sub-panes:
+
+- **Zero-Day Patterns** — catalog filterable by OSI layer, severity, and
+  AI-discovered. Click any card → defenses + behavioral indicators.
+- **Coverage Matrix** — per-layer table showing how many ATT&CK
+  techniques are mapped at each layer, how many have defenses in our
+  catalog, how many zero-day patterns target it. Plus a list of
+  catalog gaps (techniques with NO defense mapped — good targets for
+  catalog growth).
+- **Recommend Defenses** — paste a technique id, get the ranked defense
+  list with each defense's NikruvX-module pointer (when applicable —
+  many D3FEND defenses link directly to existing NikruvX engine modules).
+- **Technique Browser** — filterable table of all ATT&CK techniques.
+  Click a row to jump to the recommendations for that technique.
+
+### How it complements the rest of NikruvX
+
+The TTP layer is the bridge:
+
+```
+:CVE  --[OBSERVED_IN]--  :ZeroDayPattern  --[USES_TECHNIQUE]-->  :AttackTechnique
+                                                                        |
+                                                                  COUNTERED_BY
+                                                                        v
+                                              :Control <--[IMPLEMENTED_BY]-- :DefenseTechnique
+```
+
+That last edge means: when you upload an AWS-WAF policy, the gap analyzer
+already knows it implements `D3-WAF`, which counters `T1190`, which is
+the TTP behind Log4Shell, regreSSHion, MOVEit, xz-utils, and any
+zero-day Big Sleep finds next month that exploits a public-facing app.
+**Defenses written against the TTP cover both disclosed CVEs and
+not-yet-disclosed zero-days that use the same technique.**
+
+### Endpoints
+
+```
+POST /api/zero-day/seed                    # seed all three catalogs
+GET  /api/zero-day/stats
+GET  /api/zero-day/coverage
+GET  /api/zero-day/coverage/gaps
+GET  /api/zero-day/coverage/installed       # vs live policy/control nodes
+GET  /api/zero-day/patterns?layer=&ai_only=&severity=
+GET  /api/zero-day/pattern/{pattern_id}
+GET  /api/zero-day/techniques?layer=&tactic=
+GET  /api/zero-day/recommend?technique=T1190
+GET  /api/zero-day/defenses?tactic=Harden
+```
+
+### Graph schema
+
+```
+:AttackTechnique  { id, name, tactic, description, layer,
+                    capabilities[], platforms[], url }
+:DefenseTechnique { id, name, tactic, description, counters[],
+                    nikruvx_module, url }
+:ZeroDayPattern   { id, name, description, severity, layer,
+                    cve_ids[], first_seen, source, ai_discovered,
+                    public_disclosure, behavioral_indicators[],
+                    references[] }
+:BehavioralIndicator { id, description, telemetry_source }
+
+:AttackTechnique -[:MANIFESTS_AT]-> :OSILayer
+:AttackTechnique -[:COUNTERED_BY]-> :DefenseTechnique
+:DefenseTechnique -[:IMPLEMENTED_BY]-> :Control
+:ZeroDayPattern -[:USES_TECHNIQUE]-> :AttackTechnique
+:ZeroDayPattern -[:OBSERVED_IN]-> :CVE
+:ZeroDayPattern -[:DETECTED_BY]-> :BehavioralIndicator
+```
+
 ### Extending the corpus
 
 Add a probe to one of the lists in `engine/model_corpus.py`:
@@ -1127,6 +1269,182 @@ Probe(
 ```
 
 Re-run; the new probe is in. No other code changes required.
+
+---
+
+## Zero-Day Defense v2 — Anticipatory + Operational
+
+The premise: AI agents (Big Sleep, OSS-Fuzz with LLM input mutators,
+internal red-team systems) are finding vulnerabilities at a pace that
+the patch cycle cannot match. Defense has to shift from "patch known
+CVEs" to "have D3FEND coverage for the TTP class" — defenses written
+against `T1190` cover Log4Shell, regreSSHion, MOVEit, *and* whatever AI
+finds next month that exploits a public-facing app. The TTP layer is
+stable; the CVE pipeline isn't.
+
+v2 expands the module from a static catalog into a live operational
+surface with five additions:
+
+### AI Threat Landscape (anticipatory defense)
+
+The catalog now distinguishes **already-discovered** AI finds (Big
+Sleep SQLite, OSS-Fuzz LLM-assisted CVEs, MCP tool-poisoning, indirect
+prompt injection — 4 entries) from a **forecast wave** of 12 patterns
+representing classes AI offensive automation is making cheap to
+industrialize:
+
+| ID | Class | Mitigation Window |
+|---|---|---|
+| ZD-AI-MASS-MEMORY-FUZZ | Mass memory-safety in legacy C/C++ deps | immediate |
+| ZD-AI-CRYPTO-SIDE-CHANNEL | Timing/cache leaks in deployed crypto | weeks |
+| ZD-AI-PROTOCOL-DESYNC | State-machine bugs in TLS / HTTP/2 / SSH | weeks |
+| ZD-AI-IAM-MISCONFIG-MASS | Cross-account IAM trust enumeration at scale | immediate |
+| ZD-AI-SAAS-SSRF-WAVE | SSRF discovery across SaaS APIs | immediate |
+| ZD-AI-CICD-INJECTION | GitHub Actions / GitLab CI command injection | immediate |
+| ZD-AI-OAUTH-FLOW-EXPLORE | OAuth flow confusion across SaaS | weeks |
+| ZD-AI-RACE-CONDITION-MASS | TOCTOU bugs in kernel APIs | weeks |
+| ZD-AI-CONFUSED-DEPUTY-AGENT | Agent-to-agent trust-boundary attacks | immediate |
+| ZD-AI-ADVERSARIAL-AT-SCALE | LLM-generated adversarial corpora | immediate |
+| ZD-AI-MAINTAINER-IMPERSONATION | xz-utils class but at industrial scale | immediate |
+| ZD-AI-DESERIALIZATION-WAVE | Next Log4Shell-class deserialization wave | immediate |
+
+The recommender treats forecast entries identically to disclosed ones —
+click `ZD-AI-CICD-INJECTION` and you get the same defense list (`D3-CCSV`,
+`D3-SBOM`, `D3-3PR`) you'd get for a real CVE-tagged disclosure. **You
+don't need to wait for the first CVE to deploy the defense.**
+
+### Live RSS threat-intel ingester
+
+Six curated feeds: Project Zero, Microsoft MSTIC, CrowdStrike, Unit 42,
+Trail of Bits, Schneier on Security, Krebs on Security. RSS / Atom
+parser with redirect following + per-call timeouts. Two-tier extraction:
+
+- **Fast path (default)** — regex/keyword extraction for ATT&CK technique
+  IDs, OSI layer inference from keywords, severity from "critical /
+  actively exploited / KEV / pre-auth RCE" wording, behavioral indicators
+  from sentence-shaped extraction, AI-discovery hint detection ("Big
+  Sleep", "naptime", "OSS-Fuzz LLM"). 5–15s for full sweep.
+- **LLM-assisted (opt-in)** — Ollama llama3.1 with 15s per-entry timeout
+  + JSON output validated against the ATT&CK catalog. `--llm` flag.
+
+High-severity entries auto-file as `:ZeroDayPattern` nodes prefixed
+`ZD-RSS-*` so they appear in the recommender + landscape immediately.
+Background daemon-thread loop refreshes every 6h.
+
+```powershell
+python -m ingest.threat_intel_rss ingest               # fast sweep, all feeds
+python -m ingest.threat_intel_rss ingest --llm         # LLM extraction
+python -m ingest.threat_intel_rss one --id project_zero
+```
+
+### Model Gate cross-reference
+
+`engine.zero_day_defense.import_from_model_gate(min_severity, max_age_days)`
+scans recent `:ModelEval` failures and files them as `:ZeroDayPattern`
+entries with `id="ZD-MG-*"`, `ai_discovered=true`. Probe categories map
+to ATT&CK techniques (`direct_prompt_injection → AML.T0051,AML.T0048`,
+`tool_call_safety → AML.T0052,AML.T0048`, etc.). Probes that fail in
+your live model gate suite become first-class zero-day patterns.
+
+### SIEM rule generator
+
+`engine.siem_generator.generate_for_indicator(indicator, technique_id, severity)`
+emits five formats from one (indicator, technique) pair:
+
+- **Sigma** (vendor-agnostic YAML, translatable to anything)
+- **KQL** (Microsoft Sentinel / Defender XDR / 365 Defender)
+- **Splunk SPL**
+- **Elastic DSL**
+- **CrowdStrike Falcon FQL**
+
+`generate_for_pattern(pattern_id)` produces the cross product (every
+indicator × every technique on the pattern). For
+`ZD-2024-XZ-UTILS` (3 indicators × 3 techniques) that's 9 ready-to-deploy
+detection rules covering the whole pattern. Auto-classifies log source
+from indicator content (linux_auth / windows_event / web_access /
+cloud_aws / etc.) and applies the right table mappings per format.
+
+### Personalized Risk
+
+`engine.personalized_risk.compute_exposure(top_n)` cross-references your
+live Asset Inventory (Application categories → capability classes) with
+the ATT&CK + zero-day catalogs against your installed Policy/Control
+nodes. Returns ranked exposure list with severity score:
+
+```
+score = severity × forecast_window × (1 + missing_defense_ratio) × (1 + 0.1 × n_apps)
+```
+
+`/summary` endpoint surfaces the four numbers a CISO actually wants:
+`techniques_at_risk`, `immediate_action_techniques`,
+`ai_anticipated_techniques`, `techniques_with_no_installed_defense`.
+The last one is the headline metric — *"how many TTP classes hit my
+stack with zero defense in place?"*
+
+### v2 endpoints
+
+```
+POST /api/zero-day/rss/sweep?use_llm=&auto_file=
+POST /api/zero-day/rss/feed/{feed_id}
+GET  /api/zero-day/rss/recent?limit=50
+POST /api/zero-day/import-from-model-gate?min_severity=high&max_age_days=30
+POST /api/zero-day/siem/from-indicator
+GET  /api/zero-day/siem/from-pattern/{pattern_id}
+GET  /api/zero-day/personalized-risk?top_n=50
+GET  /api/zero-day/personalized-risk/summary
+GET  /api/zero-day/ai-landscape
+```
+
+### v2 UI
+
+Eight sub-panes in the Zero-Day Defense tab:
+1. **AI Threat Landscape** — forecast wave grouped by mitigation window
+2. **My Risk** — personalized exposure with hero stats
+3. **All Patterns** — full catalog filterable by layer / severity / AI-only
+4. **Coverage Matrix** — per-OSI-layer technique × defense coverage
+5. **SIEM Rules** — generate detection rules for an indicator or pattern
+6. **Threat Intel (RSS)** — live sweep + recent advisories list
+7. **Recommend Defenses** — paste a technique id, get ranked defenses
+8. **Technique Browser** — filterable table with click-to-recommend
+
+---
+
+## Data Sources Dashboard
+
+Top-level **Data Sources** tab. Per-source row shows last-refresh
+timestamp (color-coded green / amber / red by age), count, and a Refresh
+button that kicks off the ingester in a daemon thread. Long-running
+sweeps (NVD, OSV) return immediately with a job id; the UI auto-polls
+every 4 seconds until they finish, then updates the row. Refresh-ALL
+button kicks off every supported source at once.
+
+| Source | Refresher | Estimated time |
+|---|---|---|
+| NVD CVE catalog | `ingest.nvd.ingest_recent` (rolling 7-day window) | minutes |
+| MITRE CWE catalog | `ingest.cwe.ingest` | seconds |
+| OSV / Package corpus | `ingest.osv.ingest` | minutes |
+| CISA KEV | `ingest.telemetry.ingest_kev` | seconds |
+| Malicious-package feeds | `engine.threat_feeds.refresh_all` | minutes |
+| Threat-intel RSS | `ingest.threat_intel_rss.ingest_all` | seconds |
+| ATT&CK technique catalog | `engine.zero_day_defense.seed_attack_techniques` | seconds |
+| D3FEND defense catalog | `engine.zero_day_defense.seed_defense_techniques` | seconds |
+| Zero-day pattern catalog | `engine.zero_day_defense.seed_zero_day_patterns` | seconds |
+| Asset Inventory | `ingest.inventory.scan_all` | seconds |
+| MCP Gate approvals | `engine.mcp_gate.review_inventory` | seconds |
+
+Endpoints:
+
+```
+GET  /api/data-sources                          # all source statuses
+GET  /api/data-sources/{source_id}              # single source
+POST /api/data-sources/{source_id}/refresh      # trigger refresh
+POST /api/data-sources/refresh-all              # refresh everything
+```
+
+The freshness model uses Cypher queries against the existing graph —
+no separate state table — so any ingester that writes timestamped nodes
+is automatically surveilled. Adding a new source is one entry in
+`engine.data_freshness.SOURCES`.
 
 ---
 

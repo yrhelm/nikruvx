@@ -33,6 +33,8 @@
     <button class="mode-btn" data-mode="lineage">PHI Lineage</button>
     <button class="mode-btn" data-mode="mcpgate">MCP Gate</button>
     <button class="mode-btn" data-mode="modelgate">Model Gate</button>
+    <button class="mode-btn" data-mode="zeroday">Zero-Day Defense</button>
+    <button class="mode-btn" data-mode="datasources">Data Sources</button>
     <button class="mode-btn" data-mode="kev">Live KEV</button>
   </nav>
 </header>
@@ -279,6 +281,23 @@
     </div>
   </section>
 
+  <section id="datasourcesMode" class="mode-overlay" hidden>
+    <div class="mode-inner">
+      <h2>Data Sources — <span class="muted">freshness + on-demand refresh</span></h2>
+      <div class="muted" style="margin-bottom:8px">
+        Every source the project ingests, with last-refresh timestamps and a
+        refresh button per source. Long-running ingests (NVD, OSV) run in a
+        background thread; the button returns immediately and the row shows
+        an in-flight job badge until the sweep completes.
+      </div>
+      <div class="rt-row">
+        <button id="dsRefreshAll">Refresh ALL sources</button>
+        <button id="dsRefreshList">Reload status</button>
+      </div>
+      <div id="dsOut" class="muted" style="margin-top:12px">Loading…</div>
+    </div>
+  </section>
+
   <section id="kevMode" class="mode-overlay" hidden>
     <div class="mode-inner">
       <h2>Live KEV — <span class="muted">CISA Known Exploited Vulnerabilities</span></h2>
@@ -424,6 +443,182 @@ github-mcp'></textarea>
           <button id="mgRefreshHistory">Refresh history</button>
         </div>
         <div id="mgHistoryOut" class="muted" style="margin-top:12px"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="zerodayMode" class="mode-overlay" hidden>
+    <div class="mode-inner">
+      <h2>Zero-Day Defense — <span class="muted">TTP-based defense across the OSI layers</span></h2>
+      <div class="hero-stats" id="zdStats" style="margin-bottom:14px">
+        <div class="stat"><div class="num" id="zdTechCount">—</div><div class="lbl">ATT&amp;CK Techniques</div></div>
+        <div class="stat"><div class="num" id="zdDefCount">—</div><div class="lbl">Defenses</div></div>
+        <div class="stat"><div class="num" id="zdPatternCount">—</div><div class="lbl">Zero-Day Patterns</div></div>
+        <div class="stat"><div class="num" id="zdAiCount">—</div><div class="lbl">AI-Discovered</div></div>
+        <div class="stat"><div class="num" id="zdGapCount">—</div><div class="lbl">Catalog Gaps</div></div>
+      </div>
+      <nav class="sub-tabs">
+        <button class="sub-btn active" data-zdsub="ailandscape">AI Threat Landscape</button>
+        <button class="sub-btn" data-zdsub="myrisk">My Risk</button>
+        <button class="sub-btn" data-zdsub="patterns">All Patterns</button>
+        <button class="sub-btn" data-zdsub="coverage">Coverage Matrix</button>
+        <button class="sub-btn" data-zdsub="siem">SIEM Rules</button>
+        <button class="sub-btn" data-zdsub="rss">Threat Intel (RSS)</button>
+        <button class="sub-btn" data-zdsub="recommend">Recommend Defenses</button>
+        <button class="sub-btn" data-zdsub="techniques">Technique Browser</button>
+      </nav>
+
+      <div id="zdsubAilandscape" class="sub-pane">
+        <div class="muted" style="margin-bottom:8px">
+          <b>Anticipatory defense.</b> Two horizons: <b>Discovered</b> (AI agents
+          like Big Sleep / OSS-Fuzz already found these in the wild) and
+          <b>Anticipated wave</b> (forecasted classes that AI offensive
+          automation is making cheap to industrialize — pre-mitigate before
+          the first CVE drops). Items are color-coded by mitigation window:
+          <span class="chip" style="background:#3a1212;color:#ffb4b4">immediate</span>
+          <span class="chip" style="background:#3a3012;color:#ffd479">weeks</span>
+          <span class="chip" style="background:#1f3a2a;color:#a4e2b8">months</span>.
+        </div>
+        <div id="zdLandscapeOut" class="muted">Loading…</div>
+      </div>
+
+      <div id="zdsubPatterns" class="sub-pane" hidden>
+        <div class="rt-row">
+          <button id="zdSeedAll">Seed catalogs into graph</button>
+          <label>OSI layer
+            <select id="zdPatternLayer">
+              <option value="">All</option>
+              <option value="1">L1 Physical</option>
+              <option value="2">L2 Data Link</option>
+              <option value="3">L3 Network</option>
+              <option value="4">L4 Transport</option>
+              <option value="5">L5 Session</option>
+              <option value="6">L6 Presentation</option>
+              <option value="7">L7 Application</option>
+            </select>
+          </label>
+          <label>Severity
+            <select id="zdPatternSev">
+              <option value="">All</option>
+              <option value="critical">Critical</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
+          </label>
+          <label><input id="zdPatternAi" type="checkbox"/> AI-discovered only</label>
+          <button id="zdRefreshPatterns">Refresh</button>
+        </div>
+        <div id="zdPatternsOut" class="muted" style="margin-top:12px">
+          Loading…
+        </div>
+      </div>
+
+      <div id="zdsubCoverage" class="sub-pane" hidden>
+        <div class="muted" style="margin-bottom:8px">
+          Per-OSI-layer coverage. Each row shows how many ATT&amp;CK techniques are
+          mapped at that layer, how many have at least one defense in our catalog,
+          and how many curated zero-day patterns target it.
+        </div>
+        <div id="zdCoverageOut" class="muted">Loading…</div>
+        <h4 style="margin-top:18px">Catalog gaps (techniques with NO defense mapped)</h4>
+        <div id="zdGapsOut" class="muted">Loading…</div>
+      </div>
+
+      <div id="zdsubRecommend" class="sub-pane" hidden>
+        <div class="muted" style="margin-bottom:6px">
+          Pick an ATT&amp;CK technique id (e.g. <code>T1190</code>, <code>AML.T0051</code>)
+          and we'll surface the D3FEND + custom defenses that counter it,
+          ranked by tactic priority (Harden → Isolate → Detect → Deceive → Evict → Restore).
+        </div>
+        <div class="rt-row">
+          <input id="zdRecTechnique" type="text" placeholder="T1190 or AML.T0051"
+            style="flex:1;min-width:260px"/>
+          <button id="zdRecRun">Recommend</button>
+        </div>
+        <div id="zdRecOut" class="rt-result" style="margin-top:12px;display:none"></div>
+      </div>
+
+      <div id="zdsubMyrisk" class="sub-pane" hidden>
+        <div class="muted" style="margin-bottom:8px">
+          <b>What zero-days would land on YOUR stack?</b> Cross-references your
+          live Asset Inventory + installed Policy/Control nodes against the
+          ATT&amp;CK + zero-day catalogs. Items are scored by severity ×
+          forecast urgency × defense gap × app blast radius.
+        </div>
+        <div class="rt-row">
+          <label>Top N
+            <input id="myRiskTopN" type="number" value="25" min="5" max="200" style="width:80px"/>
+          </label>
+          <button id="myRiskRefresh">Refresh</button>
+        </div>
+        <div id="myRiskOut" class="muted" style="margin-top:12px">Click Refresh to compute exposure.</div>
+      </div>
+
+      <div id="zdsubSiem" class="sub-pane" hidden>
+        <div class="muted" style="margin-bottom:8px">
+          Generate ready-to-deploy detection rules from a behavioral indicator
+          + ATT&amp;CK technique. Five formats: <b>Sigma</b> (vendor-agnostic),
+          <b>KQL</b> (Sentinel/Defender), <b>Splunk SPL</b>, <b>Elastic DSL</b>,
+          <b>CrowdStrike FQL</b>. Or pick a zero-day pattern and generate
+          rules for every one of its indicators × techniques.
+        </div>
+        <div class="rt-row">
+          <label>Pattern id
+            <input id="siemPatternId" type="text" placeholder="ZD-2024-XZ-UTILS"
+                   style="min-width:220px"/>
+          </label>
+          <button id="siemFromPattern">Generate from pattern</button>
+        </div>
+        <div class="rt-row" style="margin-top:8px">
+          <label>Indicator
+            <input id="siemIndicator" type="text"
+                   placeholder="user-controlled string with ${jndi: in any log"
+                   style="flex:1;min-width:300px"/>
+          </label>
+          <label>Technique
+            <input id="siemTechnique" type="text" placeholder="T1190" style="width:120px"/>
+          </label>
+          <button id="siemFromIndicator">Generate</button>
+        </div>
+        <div id="siemOut" class="rt-result" style="margin-top:12px;display:none"></div>
+      </div>
+
+      <div id="zdsubRss" class="sub-pane" hidden>
+        <div class="muted" style="margin-bottom:8px">
+          Live threat-intel from Project Zero / MSTIC / CrowdStrike / Unit 42 /
+          Trail of Bits / Mandiant. New advisories with high-severity techniques
+          are auto-filed as <code>:ZeroDayPattern</code> entries (id prefix
+          <code>ZD-RSS-*</code>) so they appear in the recommender + landscape.
+        </div>
+        <div class="rt-row">
+          <button id="rssSweepAll">Sweep all feeds (fast)</button>
+          <button id="rssSweepAllLlm">Sweep with LLM extraction</button>
+          <button id="rssRefreshList">Refresh advisories list</button>
+          <button id="rssImportFromModel">Import findings from Model Gate</button>
+        </div>
+        <div id="rssOut" class="muted" style="margin-top:12px">Click Sweep to pull the latest from every feed (uses LLM extraction if Ollama is up; falls back to regex).</div>
+      </div>
+
+      <div id="zdsubTechniques" class="sub-pane" hidden>
+        <div class="rt-row">
+          <label>OSI layer
+            <select id="zdTechLayer">
+              <option value="">All</option>
+              <option value="1">L1</option><option value="2">L2</option>
+              <option value="3">L3</option><option value="4">L4</option>
+              <option value="5">L5</option><option value="6">L6</option>
+              <option value="7">L7</option>
+            </select>
+          </label>
+          <label>Tactic
+            <select id="zdTechTactic">
+              <option value="">All</option>
+            </select>
+          </label>
+          <button id="zdRefreshTech">Refresh</button>
+        </div>
+        <div id="zdTechOut" class="muted" style="margin-top:12px">Loading…</div>
       </div>
     </div>
   </section>

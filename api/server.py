@@ -38,6 +38,10 @@ from engine import ai_vendor_config as _vendor_audit
 from engine import mcp_gate
 from engine import model_gate as _model_gate
 from engine import model_corpus as _model_corpus
+from engine import zero_day_defense as _zdd
+from engine import siem_generator as _siem
+from engine import personalized_risk as _prisk
+from engine import data_freshness as _freshness
 from ingest.sbom import scan as sbom_scan
 from ingest.telemetry import ingest_kev, kev_summary
 from ingest.policies import parse_any as parse_policy
@@ -1174,6 +1178,186 @@ def model_gate_corpus() -> dict:
             "title": p.title, "grader": p.grader, "ref": p.ref,
         } for p in _model_corpus.CORPUS],
     }
+
+
+# --------------------------- Zero-Day Defense ------------------------------
+@app.post("/api/zero-day/seed")
+def zdd_seed() -> dict:
+    """Seed all three catalogs (techniques, defenses, patterns) into the graph."""
+    return _zdd.seed_all()
+
+
+@app.get("/api/zero-day/stats")
+def zdd_stats() -> dict:
+    return _zdd.stats()
+
+
+@app.get("/api/zero-day/coverage")
+def zdd_coverage() -> dict:
+    return _zdd.coverage_matrix()
+
+
+@app.get("/api/zero-day/coverage/gaps")
+def zdd_coverage_gaps() -> dict:
+    rows = _zdd.coverage_gaps()
+    return {"count": len(rows), "rows": rows}
+
+
+@app.get("/api/zero-day/coverage/installed")
+def zdd_installed_coverage() -> dict:
+    return _zdd.installed_coverage()
+
+
+@app.get("/api/zero-day/patterns")
+def zdd_patterns(layer: int | None = None,
+                 ai_only: bool = False,
+                 severity: str | None = None,
+                 predicted_only: bool = False,
+                 historical_only: bool = False,
+                 mitigation_window: str | None = None) -> dict:
+    rows = _zdd.list_patterns(
+        layer=layer, ai_only=ai_only, severity=severity,
+        predicted_only=predicted_only, historical_only=historical_only,
+        mitigation_window=mitigation_window,
+    )
+    return {"count": len(rows), "rows": rows}
+
+
+@app.get("/api/zero-day/ai-landscape")
+def zdd_ai_landscape() -> dict:
+    """Anticipatory-defense view: AI-discovered + AI-anticipated forecast."""
+    return _zdd.ai_threat_landscape()
+
+
+# --- v2: SIEM rule generator ---
+class _SiemFromIndicator(BaseModel):
+    indicator: str
+    technique_id: str
+    severity: str = "medium"
+    title: str | None = None
+
+
+@app.post("/api/zero-day/siem/from-indicator")
+def zdd_siem_from_indicator(req: _SiemFromIndicator) -> dict:
+    return _siem.to_dict(_siem.generate_for_indicator(
+        req.indicator, req.technique_id, req.severity, req.title))
+
+
+@app.get("/api/zero-day/siem/from-pattern/{pattern_id}")
+def zdd_siem_from_pattern(pattern_id: str) -> dict:
+    rules = [_siem.to_dict(d) for d in _siem.generate_for_pattern(pattern_id)]
+    if not rules:
+        raise HTTPException(status_code=404, detail="No pattern or no indicators")
+    return {"count": len(rules), "rules": rules,
+            "formats": _siem.available_formats()}
+
+
+# --- v2: Personalized risk ---
+@app.get("/api/zero-day/personalized-risk")
+def zdd_personalized_risk(top_n: int = 50) -> dict:
+    return {"items": _prisk.compute_exposure(top_n=top_n)}
+
+
+@app.get("/api/zero-day/personalized-risk/summary")
+def zdd_personalized_risk_summary() -> dict:
+    return _prisk.summary()
+
+
+# --- v2: RSS threat-intel + Model Gate cross-reference ---
+@app.post("/api/zero-day/rss/sweep")
+def zdd_rss_sweep(auto_file: bool = True,
+                  use_llm: bool = False,
+                  llm_timeout: float = 15.0) -> dict:
+    """Default = fast regex extraction. Pass use_llm=true to enable Ollama
+    extraction (requires Ollama running; per-entry timeout protects against
+    hangs)."""
+    from ingest.threat_intel_rss import ingest_all
+    return ingest_all(auto_file=auto_file, use_llm=use_llm,
+                      llm_timeout=llm_timeout)
+
+
+@app.post("/api/zero-day/rss/feed/{feed_id}")
+def zdd_rss_feed(feed_id: str, auto_file: bool = True,
+                 use_llm: bool = False,
+                 llm_timeout: float = 15.0) -> dict:
+    from ingest.threat_intel_rss import DEFAULT_FEEDS, import_feed
+    feed = next((f for f in DEFAULT_FEEDS if f["id"] == feed_id), None)
+    if not feed:
+        raise HTTPException(status_code=404, detail=f"Unknown feed id: {feed_id}")
+    return import_feed(feed, auto_file=auto_file,
+                       use_llm=use_llm, llm_timeout=llm_timeout)
+
+
+@app.get("/api/zero-day/rss/recent")
+def zdd_rss_recent(limit: int = 50) -> dict:
+    from ingest.threat_intel_rss import list_recent_advisories
+    rows = list_recent_advisories(limit=limit)
+    return {"count": len(rows), "rows": rows}
+
+
+@app.post("/api/zero-day/import-from-model-gate")
+def zdd_import_model_gate(min_severity: str = "high",
+                          max_age_days: int = 30) -> dict:
+    return _zdd.import_from_model_gate(
+        min_severity=min_severity, max_age_days=max_age_days)
+
+
+# --------------------------- Data Sources Freshness ------------------------
+@app.get("/api/data-sources")
+def data_sources_status() -> dict:
+    """Per-source dashboard: count, last refresh, in-flight job state."""
+    rows = _freshness.status_all()
+    return {"count": len(rows), "rows": rows}
+
+
+@app.get("/api/data-sources/{source_id}")
+def data_source_one(source_id: str) -> dict:
+    out = _freshness.status_one(source_id)
+    if not out:
+        raise HTTPException(status_code=404, detail=f"Unknown source: {source_id}")
+    return out
+
+
+@app.post("/api/data-sources/{source_id}/refresh")
+def data_source_refresh(source_id: str) -> dict:
+    """Trigger refresh; long-running tasks run in a background thread.
+    Returns immediately with a job id."""
+    return _freshness.refresh(source_id)
+
+
+@app.post("/api/data-sources/refresh-all")
+def data_sources_refresh_all() -> dict:
+    """Kick off refresh for every source that supports it."""
+    return _freshness.refresh_all()
+
+
+@app.get("/api/zero-day/pattern/{pattern_id}")
+def zdd_pattern(pattern_id: str) -> dict:
+    out = _zdd.recommend_for_pattern(pattern_id)
+    if "error" in out:
+        raise HTTPException(status_code=404, detail=out["error"])
+    return out
+
+
+@app.get("/api/zero-day/techniques")
+def zdd_techniques(layer: int | None = None,
+                   tactic: str | None = None) -> dict:
+    rows = _zdd.list_techniques(layer=layer, tactic=tactic)
+    return {"count": len(rows), "rows": rows}
+
+
+@app.get("/api/zero-day/recommend")
+def zdd_recommend(technique: str) -> dict:
+    out = _zdd.recommend_defenses(technique)
+    if "error" in out:
+        raise HTTPException(status_code=404, detail=out["error"])
+    return out
+
+
+@app.get("/api/zero-day/defenses")
+def zdd_defenses(tactic: str | None = None) -> dict:
+    rows = _zdd.list_defenses(tactic=tactic)
+    return {"count": len(rows), "rows": rows}
 
 
 @app.get("/api/lineage/vendor-rules")
