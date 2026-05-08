@@ -42,6 +42,10 @@ from engine import zero_day_defense as _zdd
 from engine import siem_generator as _siem
 from engine import personalized_risk as _prisk
 from engine import data_freshness as _freshness
+from engine import model_gate_petri as _petri
+from engine import petri_scenarios as _petri_scenarios
+from engine import predictive as _predictive
+from engine import external_finding_prioritizer as _ext_prio
 from ingest.sbom import scan as sbom_scan
 from ingest.telemetry import ingest_kev, kev_summary
 from ingest.policies import parse_any as parse_policy
@@ -1329,6 +1333,192 @@ def data_source_refresh(source_id: str) -> dict:
 def data_sources_refresh_all() -> dict:
     """Kick off refresh for every source that supports it."""
     return _freshness.refresh_all()
+
+
+# --------------------------- Petri Multi-turn Audits -----------------------
+class _PetriRunRequest(BaseModel):
+    target_spec: str
+    auditor_spec: str
+    scenario_id: str
+    judge_spec: str | None = None
+    persist: bool = False
+    bridge_to_zero_day: bool = False
+
+
+@app.get("/api/petri/scenarios")
+def petri_scenarios_list() -> dict:
+    """Return the curated Petri scenario catalog."""
+    return {
+        "count": len(_petri_scenarios.PETRI_SCENARIOS),
+        "categories": _petri_scenarios.CATEGORIES,
+        "scenarios": [{
+            "id": s.id, "title": s.title, "category": s.category,
+            "severity": s.severity, "hypothesis": s.hypothesis,
+            "max_turns": s.max_turns,
+        } for s in _petri_scenarios.PETRI_SCENARIOS],
+    }
+
+
+@app.get("/api/petri/scenario/{scenario_id}")
+def petri_scenario(scenario_id: str) -> dict:
+    s = _petri_scenarios.by_id(scenario_id)
+    if not s:
+        raise HTTPException(status_code=404, detail="Unknown scenario")
+    from dataclasses import asdict
+    return asdict(s)
+
+
+@app.post("/api/petri/run")
+def petri_run(req: _PetriRunRequest) -> dict:
+    """Run a single multi-turn audit. May take 30-90 seconds with real
+    models — consider running off the API thread in production."""
+    from dataclasses import asdict
+    result = _petri.run_audit(
+        target_spec=req.target_spec,
+        auditor_spec=req.auditor_spec,
+        scenario_id=req.scenario_id,
+        judge_spec=req.judge_spec,
+        persist_result=req.persist,
+    )
+    bridged = None
+    if req.bridge_to_zero_day and not result.passed and req.persist:
+        bridged = _petri.bridge_to_zero_day(result.audit_id)
+    out = asdict(result)
+    out["bridged_zero_day_pattern"] = bridged
+    return out
+
+
+@app.get("/api/petri/audits")
+def petri_audits(target_spec: str | None = None, limit: int = 50) -> dict:
+    rows = _petri.list_audits(target_spec=target_spec, limit=limit)
+    return {"count": len(rows), "rows": rows}
+
+
+@app.get("/api/petri/audit/{audit_id}")
+def petri_audit_one(audit_id: str) -> dict:
+    out = _petri.get_audit(audit_id)
+    if not out:
+        raise HTTPException(status_code=404, detail="Unknown audit")
+    return out
+
+
+@app.get("/api/petri/stats")
+def petri_stats() -> dict:
+    return _petri.stats()
+
+
+# --------------------------- Predictive Exposure Window --------------------
+@app.get("/api/predictive/summary")
+def predictive_summary() -> dict:
+    """Top-level predictive forecast — techniques landing in 30/90 days,
+    techniques with no installed coverage, top-5 by risk."""
+    return _predictive.summary()
+
+
+@app.get("/api/predictive/forecasts")
+def predictive_forecasts() -> dict:
+    """Full per-technique forecast list, sorted by risk_index."""
+    rows = _predictive.forecast_all()
+    return {"count": len(rows), "rows": rows}
+
+
+@app.get("/api/predictive/technique/{technique_id}")
+def predictive_technique(technique_id: str) -> dict:
+    out = _predictive.forecast_for_technique(technique_id)
+    if not out:
+        raise HTTPException(status_code=404, detail="Unknown technique")
+    return out
+
+
+@app.get("/api/predictive/velocity")
+def predictive_velocity() -> dict:
+    return _predictive.velocity_per_technique()
+
+
+# --------------------------- External Findings (Wiz/Snyk/etc) --------------
+@app.post("/api/findings/upload")
+async def findings_upload(
+    file: UploadFile = File(...),
+    source: str = Form(""),       # blank = auto-detect
+    label: str = Form(""),
+    persist: bool = Form(True),
+) -> dict:
+    """Upload a CSV from Wiz / Snyk / Tenable / Qualys / generic.
+    Auto-detects format; pass `source` to override. Re-scores against
+    your environment and persists as :ExternalFinding nodes."""
+    from ingest.external_findings import parse_csv
+    raw = await file.read()
+    detected, findings = parse_csv(raw, source=source or None)
+    scored = _ext_prio.re_score_batch(findings)
+    bid = None
+    if persist:
+        bid = _ext_prio.persist_batch(scored, source=detected,
+                                       batch_label=label or file.filename or "")
+    bands: dict[str, int] = {}
+    for s in scored:
+        bands[s.priority_band] = bands.get(s.priority_band, 0) + 1
+    from dataclasses import asdict
+    return {
+        "detected_source": detected,
+        "imported": len(findings),
+        "scored": len(scored),
+        "batch_id": bid,
+        "bands": bands,
+        "top_10": [asdict(s) for s in
+                    sorted(scored, key=lambda x: -x.nikruvx_score)[:10]],
+    }
+
+
+@app.get("/api/findings/batches")
+def findings_batches(limit: int = 50) -> dict:
+    rows = _ext_prio.list_batches(limit=limit)
+    return {"count": len(rows), "rows": rows}
+
+
+@app.get("/api/findings")
+def findings_list(batch_id: str | None = None,
+                  priority_band: str | None = None,
+                  limit: int = 200) -> dict:
+    rows = _ext_prio.list_findings(batch_id=batch_id,
+                                    priority_band=priority_band, limit=limit)
+    return {"count": len(rows), "rows": rows}
+
+
+@app.get("/api/findings/export.csv")
+def findings_export_csv(batch_id: str | None = None) -> "StreamingResponse":
+    """Re-export the prioritized list as CSV (for feeding back into Wiz/Snyk
+    or your ticketing system)."""
+    rows = _ext_prio.list_findings(batch_id=batch_id, limit=10000)
+    # Synthesize ScoredFinding-shaped objects for the existing exporter
+
+    class _S:  # noqa: N801
+        def __init__(self, r: dict):
+            import json as _json
+            self.finding = {
+                "cve_id": r.get("cve_id"), "package": r.get("package"),
+                "version": r.get("version"),
+                "original_severity": r.get("original_severity"),
+                "original_cvss": r.get("original_cvss"),
+                "title": r.get("title"), "source": r.get("source"),
+            }
+            self.nikruvx_score = r.get("nikruvx_score", 0)
+            self.priority_band = r.get("priority_band", "")
+            self.in_kev = r.get("in_kev", False)
+            self.has_poc = r.get("has_poc", False)
+            self.coverage_ratio = r.get("coverage_ratio", 0.0)
+            self.recommended_action = r.get("recommended_action", "")
+            self.matched_techniques: list[str] = []
+            try:
+                self.adjustments = _json.loads(r.get("adjustments_json") or "[]")
+            except Exception:
+                self.adjustments = []
+    csv_text = _ext_prio.to_export_csv([_S(r) for r in rows])
+    return StreamingResponse(
+        iter([csv_text]),
+        media_type="text/csv",
+        headers={"Content-Disposition":
+                 f'attachment; filename="nikruvx-findings-{batch_id or "all"}.csv"'},
+    )
 
 
 @app.get("/api/zero-day/pattern/{pattern_id}")

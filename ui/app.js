@@ -35,7 +35,7 @@ function initModes() {
 }
 function switchMode(mode) {
   document.querySelectorAll(".mode-btn").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
-  ["sbomMode","redteamMode","kevMode","postureMode","hipaaMode","clinicalMode","inventoryMode","supplychainMode","lineageMode","mcpgateMode","modelgateMode","zerodayMode","datasourcesMode"].forEach(id => {
+  ["sbomMode","redteamMode","kevMode","postureMode","hipaaMode","clinicalMode","inventoryMode","supplychainMode","lineageMode","mcpgateMode","modelgateMode","zerodayMode","findingsMode","datasourcesMode"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.hidden = id !== `${mode}Mode`;
   });
@@ -49,6 +49,7 @@ function switchMode(mode) {
   if (mode === "mcpgate")      initMcpGate();
   if (mode === "modelgate")    initModelGate();
   if (mode === "zeroday")      initZeroDay();
+  if (mode === "findings")     initFindings();
   if (mode === "datasources")  initDataSources();
 }
 
@@ -1344,13 +1345,139 @@ function initModelGate() {
 function switchMgSub(sub) {
   document.querySelectorAll("#modelgateMode .sub-btn")
     .forEach(b => b.classList.toggle("active", b.dataset.mgsub === sub));
-  ["mgsubRun","mgsubDiff","mgsubCatalog","mgsubHistory"].forEach(id => {
+  ["mgsubRun","mgsubDiff","mgsubCatalog","mgsubPetri","mgsubHistory"].forEach(id => {
     const want = "mgsub" + sub.charAt(0).toUpperCase() + sub.slice(1);
     const el = document.getElementById(id);
     if (el) el.hidden = id !== want;
   });
   if (sub === "history") mgLoadHistory();
   if (sub === "catalog" && !_mgCorpusLoaded) mgLoadCatalog();
+  if (sub === "petri") petriInit();
+}
+
+let _petriInited = false;
+async function petriInit() {
+  if (_petriInited) return;
+  _petriInited = true;
+  $("#petriRun").addEventListener("click", petriRunAudit);
+  $("#petriHistory").addEventListener("click", petriLoadHistory);
+  // Populate scenario dropdown
+  try {
+    const r = await fetch(`${API}/petri/scenarios`).then(r => r.json());
+    const sel = $("#petriScenario");
+    (r.scenarios||[]).forEach(s => {
+      const opt = document.createElement("option");
+      opt.value = s.id;
+      opt.textContent = `[${s.severity}] ${s.title} (${s.category})`;
+      sel.appendChild(opt);
+    });
+  } catch (e) {
+    console.error("petri scenarios load failed", e);
+  }
+}
+
+function petriVerdictChip(passed) {
+  return passed
+    ? `<span class="chip" style="background:#0f2a16;color:#3fb950;font-weight:600">PASSED</span>`
+    : `<span class="chip" style="background:#3a1212;color:#ffb4b4;font-weight:600">TARGET FAILED</span>`;
+}
+
+function petriTurnBlock(t) {
+  const speakerColor = t.speaker === "auditor" ? "#d4b4ff" : "#a4e2b8";
+  return `<div class="gap-card" style="margin:6px 0">
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:4px">
+      <span class="chip" style="background:#1c2128;color:${speakerColor}">${escapeHtml(t.speaker)}</span>
+      <span class="muted">turn ${t.n}</span>
+    </div>
+    <pre style="white-space:pre-wrap;word-break:break-word;margin:0;font-size:12.5px">${escapeHtml(t.content||"")}</pre>
+  </div>`;
+}
+
+async function petriRunAudit() {
+  const target = $("#petriTarget").value.trim();
+  const auditor = $("#petriAuditor").value.trim();
+  const judge = $("#petriJudge").value.trim();
+  const scenario_id = $("#petriScenario").value;
+  if (!target || !auditor || !scenario_id) {
+    alert("Target, auditor, and scenario are required.");
+    return;
+  }
+  $("#petriOut").innerHTML = `<span class="muted">Running multi-turn audit (this can take 30-90s with real models)…</span>`;
+  try {
+    const body = {
+      target_spec: target,
+      auditor_spec: auditor,
+      scenario_id,
+      judge_spec: judge || null,
+      persist: $("#petriPersist").checked,
+      bridge_to_zero_day: $("#petriBridge").checked,
+    };
+    const r = await fetch(`${API}/petri/run`, {
+      method: "POST", headers: {"content-type":"application/json"},
+      body: JSON.stringify(body),
+    }).then(r => r.json());
+    const turns = (r.turns||[]).map(petriTurnBlock).join("");
+    const bridge = r.bridged_zero_day_pattern
+      ? `<div style="margin-top:8px"><b>Bridged to zero-day catalog:</b> <code>${escapeHtml(r.bridged_zero_day_pattern)}</code></div>`
+      : "";
+    $("#petriOut").innerHTML = `
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+        ${petriVerdictChip(r.passed)}
+        <b>${escapeHtml(r.scenario_title||"")}</b>
+        <span class="muted">${(r.turns||[]).length} turns · ${(r.duration_seconds||0).toFixed(1)}s · mode: ${escapeHtml(r.execution_mode||"native")}</span>
+      </div>
+      <div class="muted">Target: <code>${escapeHtml(r.target_spec)}</code> · Auditor: <code>${escapeHtml(r.auditor_spec)}</code></div>
+      <div style="margin-top:6px"><b>Verdict:</b> ${escapeHtml(r.verdict_reason||"")}</div>
+      ${r.failure_evidence_turn ? `<div class="muted">Failure first surfaced at turn ${r.failure_evidence_turn}</div>` : ""}
+      ${bridge}
+      <h4 style="margin-top:14px">Transcript</h4>
+      ${turns}`;
+  } catch (e) {
+    $("#petriOut").innerHTML = `<span class="muted">Audit failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function petriLoadHistory() {
+  $("#petriOut").innerHTML = `<span class="muted">Loading recent audits…</span>`;
+  try {
+    const r = await fetch(`${API}/petri/audits?limit=30`).then(r => r.json());
+    if (!r.rows || !r.rows.length) {
+      $("#petriOut").innerHTML = `<span class="muted">No persisted audits yet.</span>`;
+      return;
+    }
+    const headers = `<tr><th>Verdict</th><th>Scenario</th><th>Target</th><th>Turns</th><th>Duration</th><th>When</th></tr>`;
+    const rows = r.rows.map(a => `<tr style="cursor:pointer" onclick="petriLoadAudit('${escapeHtml(a.audit_id)}')">
+      <td>${petriVerdictChip(a.passed)}</td>
+      <td><b>${escapeHtml(a.scenario_title||a.scenario_id||"?")}</b></td>
+      <td><code>${escapeHtml(a.target_spec||"?")}</code></td>
+      <td>${a.turns_count||0}</td>
+      <td>${(a.duration_seconds||0).toFixed(1)}s</td>
+      <td><span class="muted">${escapeHtml(a.ts||"")}</span></td>
+    </tr>`).join("");
+    $("#petriOut").innerHTML = `<div class="muted" style="margin:6px 0">${r.count} audit(s). Click a row to expand the transcript.</div><table class="matrix-table">${headers}${rows}</table>`;
+  } catch (e) {
+    $("#petriOut").innerHTML = `<span class="muted">History load failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function petriLoadAudit(audit_id) {
+  $("#petriOut").innerHTML = `<span class="muted">Loading ${escapeHtml(audit_id)}…</span>`;
+  try {
+    const a = await fetch(`${API}/petri/audit/${encodeURIComponent(audit_id)}`).then(r => r.json());
+    const turns = (a.turns||[]).map(petriTurnBlock).join("");
+    $("#petriOut").innerHTML = `
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+        ${petriVerdictChip(a.passed)}
+        <b>${escapeHtml(a.scenario_title||"")}</b>
+        <span class="muted">${(a.turns||[]).length} turns · ${(a.duration_seconds||0).toFixed(1)}s</span>
+      </div>
+      <div class="muted">Target: <code>${escapeHtml(a.target_spec)}</code> · Auditor: <code>${escapeHtml(a.auditor_spec)}</code></div>
+      <div style="margin-top:6px"><b>Verdict:</b> ${escapeHtml(a.verdict_reason||"")}</div>
+      <h4 style="margin-top:14px">Transcript</h4>
+      ${turns}`;
+  } catch (e) {
+    $("#petriOut").innerHTML = `<span class="muted">Audit load failed: ${escapeHtml(e.message)}</span>`;
+  }
 }
 
 async function mgPopulateCategoryFilter() {
@@ -1540,17 +1667,91 @@ function initZeroDay() {
 function switchZdSub(sub) {
   document.querySelectorAll("#zerodayMode .sub-btn")
     .forEach(b => b.classList.toggle("active", b.dataset.zdsub === sub));
-  ["zdsubAilandscape","zdsubMyrisk","zdsubPatterns","zdsubCoverage","zdsubSiem","zdsubRss","zdsubRecommend","zdsubTechniques"].forEach(id => {
+  ["zdsubAilandscape","zdsubMyrisk","zdsubPredictive","zdsubPatterns","zdsubCoverage","zdsubSiem","zdsubRss","zdsubRecommend","zdsubTechniques"].forEach(id => {
     const want = "zdsub" + sub.charAt(0).toUpperCase() + sub.slice(1);
     const el = document.getElementById(id);
     if (el) el.hidden = id !== want;
   });
   if (sub === "ailandscape") zdLoadAiLandscape();
   if (sub === "myrisk")      zdLoadMyRisk();
+  if (sub === "predictive")  zdInitPredictive();
   if (sub === "coverage")    zdLoadCoverage();
   if (sub === "siem")        zdInitSiem();
   if (sub === "rss")         zdLoadRssRecent();
   if (sub === "techniques")  zdLoadTechniques();
+}
+
+let _zdPredInited = false;
+function zdInitPredictive() {
+  if (!_zdPredInited) {
+    _zdPredInited = true;
+    $("#predRefresh").addEventListener("click", zdLoadPredictive);
+  }
+  zdLoadPredictive();
+}
+
+function _predDaysCell(days) {
+  if (days === null || days === undefined || !isFinite(days)) {
+    return `<span class="muted">no exposure</span>`;
+  }
+  const d = Number(days);
+  let color = "#a4e2b8";   // green ≥ 90
+  if (d < 7)       color = "#f85149";    // red <7d
+  else if (d < 30) color = "#ffb480";    // orange <30d
+  else if (d < 90) color = "#ffd479";    // amber <90d
+  const label = d < 1 ? "<1 day" : d < 365 ? `${d.toFixed(0)}d` : ">1y";
+  return `<span style="color:${color};font-weight:600">${label}</span>`;
+}
+
+async function zdLoadPredictive() {
+  $("#predOut").innerHTML = `<span class="muted">Computing forecasts across the ATT&amp;CK catalog…</span>`;
+  try {
+    const [s, f] = await Promise.all([
+      fetch(`${API}/predictive/summary`).then(r => r.json()),
+      fetch(`${API}/predictive/forecasts`).then(r => r.json()),
+    ]);
+    const heroStats = `
+      <div class="hero-stats" style="margin-bottom:14px">
+        <div class="stat"><div class="num">${s.total_techniques||0}</div><div class="lbl">Techniques</div></div>
+        <div class="stat"><div class="num" style="color:#a4e2b8">${s.techniques_with_exposure||0}</div><div class="lbl">With Exposure</div></div>
+        <div class="stat"><div class="num" style="color:#f85149">${s.techniques_landing_within_30_days||0}</div><div class="lbl">Within 30d</div></div>
+        <div class="stat"><div class="num" style="color:#ffd479">${s.techniques_landing_within_90_days||0}</div><div class="lbl">Within 90d</div></div>
+        <div class="stat"><div class="num" style="color:#f85149">${s.techniques_with_no_installed_coverage||0}</div><div class="lbl">No Coverage</div></div>
+      </div>
+      <div class="muted" style="margin-bottom:8px">
+        Constants: coverage_damping=${s.constants?.coverage_damping}, forecast_weight=${s.constants?.forecast_weight}.
+        Velocity is computed from catalog history (small N — treat absolute days as relative ordering).
+      </div>`;
+    const headers = `<tr>
+      <th>Risk</th><th>Window</th><th>Technique</th><th>Layer</th>
+      <th>Velocity (/mo)</th><th>Patterns</th><th>Apps</th><th>Coverage</th>
+    </tr>`;
+    // Show top 30 by risk, full list under details
+    const top = (f.rows||[]).slice(0, 30);
+    const rows = top.map(r => {
+      const cov = (r.coverage_ratio || 0) * 100;
+      const covColor = cov >= 60 ? "#3fb950" : cov >= 30 ? "#d29922" : "#f85149";
+      const patternCount = (r.historical_patterns||0) + (r.forecast_patterns||0);
+      const patternBreakdown = r.forecast_patterns ?
+        `${r.historical_patterns}H + ${r.forecast_patterns}F` :
+        `${r.historical_patterns||0}`;
+      return `<tr>
+        <td><span style="color:#f85149;font-weight:600">${r.risk_index}</span></td>
+        <td>${_predDaysCell(r.expected_days_until_landing)}</td>
+        <td><b>${escapeHtml(r.technique_name)}</b><br><span class="muted"><code>${escapeHtml(r.technique_id)}</code> · ${escapeHtml(r.tactic||'')}</span></td>
+        <td>L${r.layer}</td>
+        <td>${(r.velocity_per_month||0).toFixed(3)}</td>
+        <td>${patternBreakdown}</td>
+        <td>${r.exposed_apps||0}</td>
+        <td><span style="color:${covColor}">${cov.toFixed(0)}%</span></td>
+      </tr>`;
+    }).join("");
+    $("#predOut").innerHTML = heroStats + `
+      <div class="muted" style="margin-bottom:6px">Top 30 of ${f.count||0} techniques, sorted by composite risk_index.</div>
+      <table class="matrix-table">${headers}${rows}</table>`;
+  } catch (e) {
+    $("#predOut").innerHTML = `<span class="muted">Forecast computation failed: ${escapeHtml(e.message)}</span>`;
+  }
 }
 
 let _zdMyRiskInited = false;
@@ -2060,6 +2261,171 @@ async function zdLoadTechniques() {
     $("#zdTechOut").innerHTML = `<div class="muted" style="margin:6px 0">${r.count} technique(s). Click any row to see recommended defenses.</div><table class="matrix-table">${headers}${rows}</table>`;
   } catch (e) {
     $("#zdTechOut").innerHTML = `<span class="muted">Techniques load failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+/* ---------- External Findings (Wiz / Snyk / etc) ---------- */
+let _fnInited = false;
+function initFindings() {
+  if (_fnInited) return;
+  _fnInited = true;
+  document.querySelectorAll("#findingsMode .sub-btn").forEach(btn => {
+    btn.addEventListener("click", () => switchFnSub(btn.dataset.fnsub));
+  });
+  $("#fnUpload").addEventListener("click", fnDoUpload);
+  $("#fnRefreshResults").addEventListener("click", fnLoadResults);
+  $("#fnExportCsv").addEventListener("click", fnExportCsv);
+  $("#fnRefreshBatches").addEventListener("click", fnLoadBatches);
+}
+
+function switchFnSub(sub) {
+  document.querySelectorAll("#findingsMode .sub-btn")
+    .forEach(b => b.classList.toggle("active", b.dataset.fnsub === sub));
+  ["fnsubUpload","fnsubResults","fnsubBatches"].forEach(id => {
+    const want = "fnsub" + sub.charAt(0).toUpperCase() + sub.slice(1);
+    const el = document.getElementById(id);
+    if (el) el.hidden = id !== want;
+  });
+  if (sub === "results") fnLoadBatchSelector().then(fnLoadResults);
+  if (sub === "batches") fnLoadBatches();
+}
+
+function fnBandChip(band) {
+  const palette = {
+    critical: ["#3a1212","#ffb4b4"],
+    high:     ["#3a1f12","#ffb480"],
+    medium:   ["#3a3012","#ffd479"],
+    low:      ["#1f3a2a","#a4e2b8"],
+  }[band] || ["#1c2128","#d6e1f5"];
+  return `<span class="chip" style="background:${palette[0]};color:${palette[1]};font-weight:600">${(band||"?").toUpperCase()}</span>`;
+}
+
+async function fnDoUpload() {
+  const file = $("#fnFile").files[0];
+  if (!file) { alert("Pick a CSV file first"); return; }
+  $("#fnUploadOut").innerHTML = `<span class="muted">Uploading + re-scoring ${escapeHtml(file.name)}…</span>`;
+  try {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("source", $("#fnSource").value);
+    fd.append("label", $("#fnLabel").value);
+    fd.append("persist", $("#fnPersist").checked ? "true" : "false");
+    const r = await fetch(`${API}/findings/upload`, {method:"POST", body: fd}).then(r => r.json());
+    const bands = r.bands || {};
+    const top = (r.top_10 || []).map(s => fnRenderScoredCard(s)).join("");
+    $("#fnUploadOut").innerHTML = `
+      <div class="hero-stats" style="margin-bottom:14px">
+        <div class="stat"><div class="num">${r.imported||0}</div><div class="lbl">Imported</div></div>
+        <div class="stat"><div class="num" style="color:#f85149">${bands.critical||0}</div><div class="lbl">Critical</div></div>
+        <div class="stat"><div class="num" style="color:#ffb480">${bands.high||0}</div><div class="lbl">High</div></div>
+        <div class="stat"><div class="num" style="color:#ffd479">${bands.medium||0}</div><div class="lbl">Medium</div></div>
+        <div class="stat"><div class="num" style="color:#a4e2b8">${bands.low||0}</div><div class="lbl">Low</div></div>
+      </div>
+      <div class="muted">Detected source: <code>${escapeHtml(r.detected_source||"?")}</code> · Batch: <code>${escapeHtml(r.batch_id||"(not persisted)")}</code></div>
+      <h4 style="margin-top:14px">Top 10 by NikruvX score</h4>
+      ${top}`;
+  } catch (e) {
+    $("#fnUploadOut").innerHTML = `<span class="muted">Upload failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+function fnRenderScoredCard(s) {
+  const f = s.finding || {};
+  const adj = (s.adjustments||[]).map(a =>
+    `<div style="margin-left:10px"><span style="color:${a.delta>=0?'#f85149':'#3fb950'}">${a.delta>=0?'+':''}${Number(a.delta).toFixed(0)}</span> ${escapeHtml(a.reason)}</div>`
+  ).join("");
+  return `<div class="gap-card">
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <span class="chip" style="font-weight:700">${(s.nikruvx_score||0).toFixed(0)}</span>
+      ${fnBandChip(s.priority_band)}
+      ${s.in_kev ? '<span class="chip" style="background:#3a1212;color:#ffb4b4">KEV</span>' : ''}
+      ${s.has_poc ? '<span class="chip" style="background:#3a1f12;color:#ffb480">PoC</span>' : ''}
+      ${s.matches_forecast_pattern ? '<span class="chip" style="background:#2f1f3a;color:#d4b4ff">FORECAST</span>' : ''}
+      <b>${escapeHtml(f.cve_id||"(no CVE)")}</b>
+      <span class="muted">${escapeHtml(f.package||"")} ${escapeHtml(f.version||"")}</span>
+    </div>
+    <div class="muted" style="margin-top:4px">${escapeHtml(f.title||"")}</div>
+    <div class="muted" style="margin-top:4px">Original: ${escapeHtml(f.original_severity||"?")} · CVSS ${f.original_cvss||"?"} · Coverage: ${(s.coverage_ratio*100||0).toFixed(0)}%</div>
+    <details style="margin-top:6px"><summary>Adjustments (${(s.adjustments||[]).length})</summary>${adj}</details>
+    <div style="margin-top:6px"><b>Recommended:</b> ${escapeHtml(s.recommended_action||"")}</div>
+  </div>`;
+}
+
+async function fnLoadBatchSelector() {
+  try {
+    const r = await fetch(`${API}/findings/batches`).then(r => r.json());
+    const sel = $("#fnBatchSelect");
+    while (sel.options.length > 1) sel.remove(1);
+    (r.rows||[]).forEach(b => {
+      const opt = document.createElement("option");
+      opt.value = b.batch_id;
+      opt.textContent = `${b.source} — ${b.label||"(unlabeled)"} (${b.count})`;
+      sel.appendChild(opt);
+    });
+  } catch { /* silent */ }
+}
+
+async function fnLoadResults() {
+  const batchId = $("#fnBatchSelect").value;
+  const band = $("#fnBandFilter").value;
+  const params = new URLSearchParams();
+  if (batchId) params.set("batch_id", batchId);
+  if (band) params.set("priority_band", band);
+  $("#fnResultsOut").innerHTML = `<span class="muted">Loading…</span>`;
+  try {
+    const r = await fetch(`${API}/findings?${params.toString()}`).then(r => r.json());
+    if (!r.rows || !r.rows.length) {
+      $("#fnResultsOut").innerHTML = `<span class="muted">No findings match. Upload a CSV first.</span>`;
+      return;
+    }
+    const headers = `<tr>
+      <th>Score</th><th>Band</th><th>CVE</th><th>Package</th>
+      <th>Original</th><th>KEV</th><th>PoC</th><th>Coverage</th><th>Action</th>
+    </tr>`;
+    const rows = r.rows.map(f => `<tr>
+      <td><b>${(f.nikruvx_score||0).toFixed(0)}</b></td>
+      <td>${fnBandChip(f.priority_band)}</td>
+      <td><code>${escapeHtml(f.cve_id||"")}</code></td>
+      <td>${escapeHtml(f.package||"")} <span class="muted">${escapeHtml(f.version||"")}</span></td>
+      <td>${escapeHtml(f.original_severity||"")} (${f.original_cvss||"?"})</td>
+      <td>${f.in_kev ? "✓" : ""}</td>
+      <td>${f.has_poc ? "✓" : ""}</td>
+      <td>${((f.coverage_ratio||0)*100).toFixed(0)}%</td>
+      <td><span class="muted" style="font-size:11px">${escapeHtml((f.recommended_action||"").substring(0,80))}…</span></td>
+    </tr>`).join("");
+    $("#fnResultsOut").innerHTML = `<div class="muted" style="margin:6px 0">${r.count} finding(s).</div><table class="matrix-table">${headers}${rows}</table>`;
+  } catch (e) {
+    $("#fnResultsOut").innerHTML = `<span class="muted">Load failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+function fnExportCsv() {
+  const batchId = $("#fnBatchSelect").value;
+  const url = batchId
+    ? `${API}/findings/export.csv?batch_id=${encodeURIComponent(batchId)}`
+    : `${API}/findings/export.csv`;
+  window.open(url, "_blank");
+}
+
+async function fnLoadBatches() {
+  $("#fnBatchesOut").innerHTML = `<span class="muted">Loading…</span>`;
+  try {
+    const r = await fetch(`${API}/findings/batches`).then(r => r.json());
+    if (!r.rows || !r.rows.length) {
+      $("#fnBatchesOut").innerHTML = `<span class="muted">No batches uploaded yet.</span>`;
+      return;
+    }
+    const headers = `<tr><th>Batch ID</th><th>Source</th><th>Label</th><th>Findings</th><th>Uploaded</th></tr>`;
+    const rows = r.rows.map(b => `<tr>
+      <td><code>${escapeHtml(b.batch_id)}</code></td>
+      <td><span class="chip">${escapeHtml(b.source||"?")}</span></td>
+      <td>${escapeHtml(b.label||"(unlabeled)")}</td>
+      <td>${b.count||0}</td>
+      <td><span class="muted">${escapeHtml(b.uploaded_at||"")}</span></td>
+    </tr>`).join("");
+    $("#fnBatchesOut").innerHTML = `<table class="matrix-table">${headers}${rows}</table>`;
+  } catch (e) {
+    $("#fnBatchesOut").innerHTML = `<span class="muted">Load failed: ${escapeHtml(e.message)}</span>`;
   }
 }
 

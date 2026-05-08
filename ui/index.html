@@ -34,6 +34,7 @@
     <button class="mode-btn" data-mode="mcpgate">MCP Gate</button>
     <button class="mode-btn" data-mode="modelgate">Model Gate</button>
     <button class="mode-btn" data-mode="zeroday">Zero-Day Defense</button>
+    <button class="mode-btn" data-mode="findings">Findings (Wiz/Snyk)</button>
     <button class="mode-btn" data-mode="datasources">Data Sources</button>
     <button class="mode-btn" data-mode="kev">Live KEV</button>
   </nav>
@@ -281,6 +282,80 @@
     </div>
   </section>
 
+  <section id="findingsMode" class="mode-overlay" hidden>
+    <div class="mode-inner">
+      <h2>Findings — <span class="muted">re-prioritize Wiz / Snyk / Tenable / Qualys CSV exports against your environment</span></h2>
+      <div class="muted" style="margin-bottom:8px">
+        Upload a CSV export from your scanner. NikruvX auto-detects the
+        format and re-scores each finding against your live inventory + KEV
+        + PoC corpus + D3FEND coverage + AI-anticipated forecast catalog.
+        Each adjustment is logged so you can defend the new ranking to your
+        change-mgmt review board.
+      </div>
+      <nav class="sub-tabs">
+        <button class="sub-btn active" data-fnsub="upload">Upload</button>
+        <button class="sub-btn" data-fnsub="results">Results</button>
+        <button class="sub-btn" data-fnsub="batches">Batches</button>
+      </nav>
+
+      <div id="fnsubUpload" class="sub-pane">
+        <div class="rt-row">
+          <label>Source
+            <select id="fnSource" style="background:var(--bg-elevated);color:var(--fg-primary)">
+              <option value="">Auto-detect</option>
+              <option value="wiz">Wiz</option>
+              <option value="snyk">Snyk</option>
+              <option value="tenable">Tenable</option>
+              <option value="qualys">Qualys</option>
+              <option value="generic">Generic</option>
+            </select>
+          </label>
+          <label>Label (optional)
+            <input id="fnLabel" type="text" placeholder="e.g. prod-cluster-2026-Q2" style="min-width:240px"/>
+          </label>
+          <label><input id="fnPersist" type="checkbox" checked/> Persist</label>
+        </div>
+        <div class="rt-row" style="margin-top:8px">
+          <input id="fnFile" type="file" accept=".csv,text/csv" style="background:var(--bg-elevated);color:var(--fg-primary);padding:6px"/>
+          <button id="fnUpload">Upload + Re-score</button>
+        </div>
+        <div id="fnUploadOut" class="muted" style="margin-top:12px">
+          Drop your scanner's CSV export above. Common Wiz / Snyk / Tenable / Qualys
+          headers are auto-detected; force a specific source if detection misses.
+        </div>
+      </div>
+
+      <div id="fnsubResults" class="sub-pane" hidden>
+        <div class="rt-row">
+          <label>Batch
+            <select id="fnBatchSelect" style="min-width:280px;background:var(--bg-elevated);color:var(--fg-primary)">
+              <option value="">All batches</option>
+            </select>
+          </label>
+          <label>Priority band
+            <select id="fnBandFilter" style="background:var(--bg-elevated);color:var(--fg-primary)">
+              <option value="">Any</option>
+              <option value="critical">Critical</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
+          </label>
+          <button id="fnRefreshResults">Refresh</button>
+          <button id="fnExportCsv">Export CSV</button>
+        </div>
+        <div id="fnResultsOut" class="muted" style="margin-top:12px">Click Refresh to load.</div>
+      </div>
+
+      <div id="fnsubBatches" class="sub-pane" hidden>
+        <div class="rt-row">
+          <button id="fnRefreshBatches">Refresh</button>
+        </div>
+        <div id="fnBatchesOut" class="muted" style="margin-top:12px">Click Refresh to load.</div>
+      </div>
+    </div>
+  </section>
+
   <section id="datasourcesMode" class="mode-overlay" hidden>
     <div class="mode-inner">
       <h2>Data Sources — <span class="muted">freshness + on-demand refresh</span></h2>
@@ -379,6 +454,7 @@ github-mcp'></textarea>
         <button class="sub-btn active" data-mgsub="run">Run Eval</button>
         <button class="sub-btn" data-mgsub="diff">Regression Diff</button>
         <button class="sub-btn" data-mgsub="catalog">Probe Catalog</button>
+        <button class="sub-btn" data-mgsub="petri">Multi-turn (Petri)</button>
         <button class="sub-btn" data-mgsub="history">History</button>
       </nav>
 
@@ -438,6 +514,48 @@ github-mcp'></textarea>
         <div id="mgCatalogOut" class="muted" style="margin-top:12px"></div>
       </div>
 
+      <div id="mgsubPetri" class="sub-pane" hidden>
+        <div class="muted" style="margin-bottom:8px">
+          <b>Multi-turn auditor-vs-target audits</b> from the Petri framework
+          (Anthropic / Meridian Labs). One LLM tries to coerce another across
+          5-12 turns to surface failure modes single-turn probes cannot reach:
+          gradual jailbreaks, system-prompt extraction, deception under pressure,
+          eval awareness, sycophancy, value drift, multi-turn PHI extraction,
+          chained prompt injection.
+        </div>
+        <div class="rt-row">
+          <label>Target
+            <input id="petriTarget" type="text" value="stub:safe-target"
+                   placeholder="ollama:llama3.1 / openai:gpt-4o-mini / anthropic:claude-…"
+                   style="min-width:240px"/>
+          </label>
+          <label>Auditor
+            <input id="petriAuditor" type="text" value="stub:auditor"
+                   placeholder="anthropic:claude-3-5-sonnet (recommended)"
+                   style="min-width:240px"/>
+          </label>
+          <label>Judge
+            <input id="petriJudge" type="text"
+                   placeholder="(default: same as auditor)"
+                   style="min-width:200px"/>
+          </label>
+        </div>
+        <div class="rt-row" style="margin-top:8px">
+          <select id="petriScenario" style="min-width:380px;background:var(--bg-elevated);color:var(--fg-primary)">
+            <option value="">— pick a scenario —</option>
+          </select>
+          <label><input id="petriPersist" type="checkbox" checked/> Persist</label>
+          <label><input id="petriBridge" type="checkbox"/> Bridge failures to zero-day</label>
+          <button id="petriRun">Run audit</button>
+          <button id="petriHistory">Recent audits</button>
+        </div>
+        <div id="petriOut" class="muted" style="margin-top:12px">
+          Pick a scenario and Run. Each audit takes 30-90 seconds with real
+          models. The default <code>stub:*</code> specs run instantly so you
+          can verify the UI without API keys.
+        </div>
+      </div>
+
       <div id="mgsubHistory" class="sub-pane" hidden>
         <div class="rt-row">
           <button id="mgRefreshHistory">Refresh history</button>
@@ -460,6 +578,7 @@ github-mcp'></textarea>
       <nav class="sub-tabs">
         <button class="sub-btn active" data-zdsub="ailandscape">AI Threat Landscape</button>
         <button class="sub-btn" data-zdsub="myrisk">My Risk</button>
+        <button class="sub-btn" data-zdsub="predictive">Predictive Window</button>
         <button class="sub-btn" data-zdsub="patterns">All Patterns</button>
         <button class="sub-btn" data-zdsub="coverage">Coverage Matrix</button>
         <button class="sub-btn" data-zdsub="siem">SIEM Rules</button>
@@ -537,6 +656,22 @@ github-mcp'></textarea>
           <button id="zdRecRun">Recommend</button>
         </div>
         <div id="zdRecOut" class="rt-result" style="margin-top:12px;display:none"></div>
+      </div>
+
+      <div id="zdsubPredictive" class="sub-pane" hidden>
+        <div class="muted" style="margin-bottom:8px">
+          <b>Per-technique exposure-window forecast.</b> For every ATT&amp;CK
+          technique we have catalog data on, we compute: pattern velocity
+          (how often it's been used historically), your exposure surface
+          (apps in your inventory), installed coverage (D3FEND defenses
+          live in your policy stack), and the resulting <b>expected days
+          until a landing pattern hits your stack</b>. Use the relative
+          ordering — not the absolute days — as your remediation queue.
+        </div>
+        <div class="rt-row">
+          <button id="predRefresh">Compute / Refresh</button>
+        </div>
+        <div id="predOut" class="muted" style="margin-top:12px">Click Refresh to compute exposure-window forecasts.</div>
       </div>
 
       <div id="zdsubMyrisk" class="sub-pane" hidden>

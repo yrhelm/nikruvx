@@ -124,7 +124,17 @@ class OpenAICompatModel(_Base):
                       "temperature": kwargs.get("temperature", 0)},
                 timeout=120.0,
             )
-            r.raise_for_status()
+            if r.status_code >= 400:
+                detail = ""
+                try:
+                    err = r.json()
+                    if isinstance(err, dict):
+                        detail = err.get("error", {}).get("message") \
+                                 or err.get("message") or str(err)
+                except Exception:
+                    detail = (r.text or "")[:400]
+                return (f"[adapter-error] openai {r.status_code}: "
+                        f"{detail or 'no detail returned'}")
             doc = r.json()
             return (doc.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
         except Exception as e:  # noqa: BLE001
@@ -148,28 +158,62 @@ class AnthropicModel(_Base):
             return f"[adapter-error] httpx unavailable: {e}"
         if not self._key:
             return "[adapter-error] ANTHROPIC_API_KEY not set"
-        # Split off the system message if present (Anthropic API requires it as a sibling)
+        # Split off the system message if present (Anthropic API requires it
+        # as a sibling field, not in the messages array).
         sys_msg = ""
         msgs: list[dict[str, str]] = []
         for m in messages:
             if m.get("role") == "system":
                 sys_msg += (m.get("content") or "") + "\n"
             else:
-                msgs.append({"role": m["role"], "content": m["content"]})
+                msgs.append({"role": m["role"],
+                             "content": (m.get("content") or "")})
+        # Drop any consecutive same-role messages — Anthropic rejects them.
+        # Merge same-role neighbors by joining content with two newlines.
+        coalesced: list[dict[str, str]] = []
+        for m in msgs:
+            if coalesced and coalesced[-1]["role"] == m["role"]:
+                coalesced[-1]["content"] = (
+                    coalesced[-1]["content"] + "\n\n" + m["content"]
+                )
+            else:
+                coalesced.append({**m})
+        if not coalesced:
+            return "[adapter-error] anthropic: no user/assistant messages provided"
+
+        body: dict[str, Any] = {
+            "model": self.model_name,
+            "max_tokens": int(kwargs.get("max_tokens", 1024)),
+            "messages": coalesced,
+            "temperature": float(kwargs.get("temperature", 0)),
+        }
+        # Only include `system` when non-empty — the API rejects null.
+        sys_text = sys_msg.strip()
+        if sys_text:
+            body["system"] = sys_text
+
         try:
             r = httpx.post(
                 f"{self._base}/v1/messages",
                 headers={"x-api-key": self._key,
                          "anthropic-version": "2023-06-01",
                          "content-type": "application/json"},
-                json={"model": self.model_name,
-                      "max_tokens": kwargs.get("max_tokens", 1024),
-                      "system": sys_msg.strip() or None,
-                      "messages": msgs,
-                      "temperature": kwargs.get("temperature", 0)},
+                json=body,
                 timeout=120.0,
             )
-            r.raise_for_status()
+            if r.status_code >= 400:
+                # Surface the actual error body — that's where Anthropic
+                # tells you which field was wrong.
+                detail = ""
+                try:
+                    err = r.json()
+                    if isinstance(err, dict):
+                        detail = err.get("error", {}).get("message") \
+                                 or err.get("message") or str(err)
+                except Exception:
+                    detail = (r.text or "")[:400]
+                return (f"[adapter-error] anthropic {r.status_code}: "
+                        f"{detail or 'no detail returned'}")
             doc = r.json()
             blocks = doc.get("content") or []
             return "".join(b.get("text", "") for b in blocks
